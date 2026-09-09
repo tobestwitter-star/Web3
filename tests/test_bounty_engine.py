@@ -24,3 +24,10 @@ def test_immunefi_normalization_preserves_scope_and_reward_metadata():
     assert programs[0].max_bounty_usd==250000
     assert programs[0].metadata['assets']==['github.com/example']
     assert programs[0].metadata['rules']=='safe harbor'
+
+def test_report_contains_submission_ready_structure_without_claiming_confirmation():
+    report=build_report([{'title':'Reentrancy candidate','severity':'high','contract':'Vault','function':'withdraw','description':'External callback before balance update','confidence':0.82,'execution_evidence':{'trace':'local-only'}}],{'name':'Example','source':'immunefi_api','url':'https://example.invalid','scope_notes':'Vault is listed in scope'})
+    finding=report['findings'][0]
+    assert {'root_cause','attack_scenario','poc_reproduction','evidence','impact','economic_impact','confidence','remediation','scope_evidence','possible_duplicate_indicators','status'} <= set(finding)
+    assert finding['status']=='UNVERIFIED — HUMAN REVIEW REQUIRED'
+    assert report['do_not_auto_submit'] is True
