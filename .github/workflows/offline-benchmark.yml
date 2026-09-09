@@ -30,10 +30,16 @@ jobs:
       - name: Compile project
         run: python -m compileall -q .
       - name: Run semantic analyzer regression tests
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: python -m pytest -q tests/test_advanced_analyzer.py
       - name: Run known offline benchmark
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: python benchmarks/run_benchmark.py
       - name: Run unseen holdout benchmark
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: python benchmarks/run_holdout.py
       - name: Upload benchmark report
         uses: actions/upload-artifact@v4
