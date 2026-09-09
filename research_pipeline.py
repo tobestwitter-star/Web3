@@ -34,7 +34,11 @@ class TargetAcquirer:
   try:p=subprocess.run(['git','clone','--depth','1',target.source_url,dest],capture_output=True,text=True,timeout=180);return {'ok':p.returncode==0,'path':dest if p.returncode==0 else None,'stdout':p.stdout[-4000:],'stderr':p.stderr[-6000:]}
   except (FileNotFoundError,subprocess.TimeoutExpired) as e:return {'ok':False,'error':str(e)}
 class FindingCorrelator:
- SEVERITY={'critical':4,'high':3,'medium':2,'low':1,'informational':0};STOP={'the','and','with','risk','potential','attack','vulnerability','issue','complex','broken','advanced','business','logic'}
+ SEVERITY={'critical':4,'high':3,'medium':2,'low':1,'informational':0}
+ STOP={'the','and','with','risk','potential','attack','vulnerability','issue','complex','broken','advanced','business','logic'}
+ # Mature analyzers produce many code-quality observations that are useful to a researcher but are not
+ # security findings by themselves. Keep them in tool_results; do not promote them into correlated findings.
+ TOOL_OBSERVATION_ONLY={'solc-version','naming-convention','immutable-states','constable-states','timestamp','missing-zero-check','unused-return','uninitialized-state','low-level-calls'}
  def normalize(self,f,engine):
   text=' '.join(str(f.get(k,'')) for k in ('title','vulnerability','description','message','check'));loc=str(f.get('location') or f.get('path') or f.get('source') or '');sev=str(f.get('severity') or 'medium').lower();category=str(f.get('category') or '').lower();tokens=set(re.findall(r'[a-z0-9]{4,}',text.lower()))-self.STOP;raw=f.get('evidence',[]);evidence=raw if isinstance(raw,list) else [raw]
   return {'id':f.get('id') or hashlib.sha256((text+'|'+loc).encode()).hexdigest()[:16],'engine':engine,'title':f.get('title') or f.get('vulnerability') or f.get('check') or engine,'description':text[:4000],'location':loc,'severity':sev,'category':category,'confidence':float(f.get('confidence',.45) or .45),'evidence':evidence,'tokens':tokens,'fingerprint':hashlib.sha256((re.sub(r'\s+',' ',text.lower())+'|'+loc.lower()).encode()).hexdigest()}
@@ -46,8 +50,11 @@ class FindingCorrelator:
  def correlate(self,groups):
   merged=[]
   for g in groups:
+   engine=g.get('engine','unknown')
    for raw in g.get('findings',[]):
-    f=self.normalize(raw,g.get('engine','unknown'));match=next((m for m in merged if self._same_issue(m,f)),None)
+    check=str(raw.get('check') or raw.get('name') or raw.get('title') or raw.get('vulnerability') or '').strip().lower()
+    if engine!='existing_analyzer' and check in self.TOOL_OBSERVATION_ONLY: continue
+    f=self.normalize(raw,engine);match=next((m for m in merged if self._same_issue(m,f)),None)
     if not match:merged.append({**f,'engines':[f['engine']],'occurrences':1,'cross_tool_confidence':f['confidence'],'duplicate_classification':'no useful match'})
     else:
      match['occurrences']+=1
@@ -73,9 +80,7 @@ class ResearchPipeline:
   for r in tr.get('results',[]):groups.append({'engine':r.get('name','tool'),'findings':r.get('findings',[])})
   correlated=self.correlator.correlate(groups)
   for h in hypotheses:
-   h['independent_signals']=1;h['reproducibility']=0.0;h['economic_impact_score']=.65 if h['category'] in ('asset_flow','accounting','oracle','privilege') else .4;h['attacker_privilege']='user';h['economic_analysis']=self.economics.analyze(h);h['status']=STATUS
-   h['kind']='exploratory_hypothesis'
-  # Hypotheses remain available for analyst guidance, but are not promoted to security findings.
+   h['independent_signals']=1;h['reproducibility']=0.0;h['economic_impact_score']=.65 if h['category'] in ('asset_flow','accounting','oracle','privilege') else .4;h['attacker_privilege']='user';h['economic_analysis']=self.economics.analyze(h);h['status']=STATUS;h['kind']='exploratory_hypothesis'
   combined=correlated
   for f in combined:
    f['attack_paths']=[p for p in attack_paths if p.get('entry_point','')==f'{f.get("contract","")}.{f.get("function","")}' or p.get('entry_point','').split('.')[-1]==str(f.get('function',''))][:3] or (attack_paths[:2] if attack_paths else [])
