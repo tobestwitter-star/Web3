@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib, os, re, subprocess
 from dataclasses import dataclass,asdict
 from pathlib import Path
-from typing import Any,Dict,Iterable,List,Optional
+from typing import Any,Dict,List
 from urllib.parse import urlparse
 from advanced_web3_analyzer import AdvancedWeb3Analyzer
 from security_toolchain import SecurityToolchain
@@ -70,4 +70,13 @@ class ResearchPipeline:
    h['independent_signals']=1;h['reproducibility']=0.0;h['economic_impact_score']=.65 if h['category'] in ('asset_flow','accounting','oracle','privilege') else .4;h['attacker_privilege']='user'
   combined=correlated+hypotheses
   ranked=self.prioritizer.rank(combined,opportunity)
-  return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'protocol_map':protocol_map,'business_logic_hypotheses':hypotheses[:100],'tool_results':tr,'correlated_findings':ranked,'historical_search_leads':[self.history.search_urls(f.get('title',''),f.get('category','')) for f in ranked[:10]],'review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
+  candidate_validation=self.tools.generate_and_validate(source_dir,ranked[:10],authorization_confirmed=True,timeout=180)
+  # Only actual execution evidence can raise reproducibility; no generated test is treated as confirmation.
+  for c in candidate_validation.get('candidates',[]):
+   for ex in c.get('execution',[]):
+    if ex.get('status')=='executed':
+     for f in ranked:
+      if f.get('id')==c.get('finding_id'):
+       f['execution_evidence']={'returncode':ex.get('returncode'),'candidate_failed':ex.get('candidate_failed'),'stdout':ex.get('stdout','')[-12000:],'stderr':ex.get('stderr','')[-8000:]};f['reproducibility']=0.35 if ex.get('candidate_failed') else 0.05;f['status']='UNVERIFIED — HUMAN REVIEW REQUIRED'
+  ranked=self.prioritizer.rank(ranked,opportunity)
+  return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'protocol_map':protocol_map,'business_logic_hypotheses':hypotheses[:100],'tool_results':tr,'correlated_findings':ranked,'exploit_test_candidates':candidate_validation,'historical_search_leads':[self.history.search_urls(f.get('title',''),f.get('category','')) for f in ranked[:10]],'review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
