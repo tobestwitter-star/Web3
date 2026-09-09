@@ -67,7 +67,28 @@ class AdvancedWeb3Analyzer:
    cb=re.search(r'\bonTokenReceived\s*\(|\bonERC\w+\s*\(|\btokensReceived\s*\(',body,re.I)
    if cb and self._state_write_after(body,cb.end()):
     ev=body[:1800];fs += [self._finding('callback_token','Token callback precedes balance accounting','high','callback',code,m.start(),'A receiver callback occurs before sender/recipient balances are finalized.',ev,'Potential callback reentrancy or inconsistent token accounting.',.86),self._finding('callback_asset','External callback asset-flow risk','high','external_call',code,m.start(),'A token transfer path invokes an external receiver before completing its accounting mutation.',ev,'Potential unauthorized repeated transfer or accounting inconsistency.',.82)]
+  # Deterministic whole-source fallback for compact contracts where function-body parsing is ambiguous.
+  self._fallback_critical(code,fs)
   return fs
+ def _fallback_critical(self,code,fs):
+  def add(key,name,sev,cat,pos,desc,evidence,impact,conf):
+   if not any(x.vulnerability_type==name and x.category==cat for x in fs):fs.append(self._finding(key,name,sev,cat,code,pos,desc,evidence,impact,conf))
+  # Reentrancy: external value call followed by indexed balance/state write before the next function declaration.
+  for cm in re.finditer(r'\b\w+\.call\s*\{[^}]*\}',code,re.I):
+   end=code.find('function ',cm.end())
+   window=code[cm.end(): end if end>=0 else len(code)]
+   if re.search(self._write_pattern(),window,re.I) and not re.search(r'\bnonReentrant\b',code[max(0,cm.start()-180):cm.start()],re.I):
+    add('reentrancy_fallback','Reentrancy: external callback precedes state update','critical','reentrancy',cm.start(),'An external value call is followed by a sensitive indexed state write in the same source region without an observed reentrancy guard.',window[:1400],'Potential repeated withdrawal or inconsistent state; local callback reproduction is required.',.86);break
+  # Access control: common privileged verbs with concrete state writes and no authorization in the function region.
+  for m in re.finditer(r'\bfunction\s+(mint\w*|burn\w*|upgrade\w*|sweep|setOwner|setAdmin)\s*\(',code,re.I):
+   end=code.find('function ',m.end());window=code[m.end():end if end>=0 else len(code)]
+   if self._sensitive_write(window) and not self._has_auth(code[m.start():m.end()],window):
+    add('access_control_fallback','Sensitive operation lacks an observed authorization guard','high','access_control',m.start(),'A security-sensitive operation mutates value-bearing/privileged state without a visible authorization check.',window[:1400],'Potential unauthorized privileged action; prove reachability locally.',.8);break
+  # Explicit receiver callback followed by accounting write.
+  for m in re.finditer(r'\bonTokenReceived\s*\(',code,re.I):
+   end=code.find('function ',m.end());window=code[m.end():end if end>=0 else len(code)]
+   if re.search(self._write_pattern(),window,re.I):
+    add('callback_fallback','Token callback precedes balance accounting','high','callback',m.start(),'A receiver callback is followed by sensitive balance/accounting mutation without completion before the callback.',window[:1400],'Potential callback reentrancy or accounting inconsistency.',.84);break
  def _legacy_signals(self,code):
   specs=[('state_machine','State Machine Manipulation','critical','business_logic',[r'\b(?:state|status)\s*=']),('oracle','Oracle Manipulation / Price Attack','critical','oracle_attack',[r'\b(?:oracle|chainlink|latestAnswer|latestRoundData|getPrice|priceFeed|twap|spotPrice)\b']),('flash','Flash Loan Attack Vector','critical','flash_loan',[r'\b(?:flashLoan|flashSwap)\b']),('delegatecall','Unsafe delegatecall / upgrade surface','high','delegatecall',[r'\.(?:delegatecall|callcode)\s*\(']),('precision','Precision / rounding risk','medium','precision',[r'\b(?:mulDiv|decimals|round|1e\d+|10\s*\*\*|/\s*\d+)\b'])]
   fs=[]
