@@ -8,6 +8,9 @@ from urllib.parse import urlparse
 from advanced_web3_analyzer import AdvancedWeb3Analyzer
 from security_toolchain import SecurityToolchain
 from target_resolution import ScopeResolver,BuildDetector,TargetMap
+from protocol_research import ProtocolMapper,BusinessLogicEngine,FindingPrioritizer
+from historical_intelligence import HistoricalIntelligence
+
 @dataclass
 class Target:
  name:str; source_url:str; kind:str='repository'; branch:str=''; authorized:bool=False; scope_evidence:str=''; addresses:List[str]=None; contracts:List[str]=None; assets:List[str]=None
@@ -20,8 +23,7 @@ class TargetAcquirer:
  def extract_targets(self,opportunity:Dict[str,Any],public_text=''):
   scope=ScopeResolver().resolve(opportunity,public_text);targets=[]
   for repo in scope['repositories']:targets.append(Target(opportunity.get('name','target'),repo,authorized=False,scope_evidence=public_text,addresses=scope['contract_addresses'],assets=scope['assets']))
-  for addr in scope['contract_addresses']:
-   targets.append(Target(opportunity.get('name','target'),'',kind='evm_contract',authorized=False,scope_evidence=public_text,addresses=[addr],assets=scope['assets']))
+  for addr in scope['contract_addresses']:targets.append(Target(opportunity.get('name','target'),'',kind='evm_contract',authorized=False,scope_evidence=public_text,addresses=[addr],assets=scope['assets']))
   return targets
  def clone_public_repo(self,target,workspace,authorization_confirmed=False):
   if not authorization_confirmed or not target.authorized:return {'ok':False,'blocked':'authorization_required','reason':'Explicit scope confirmation is required.'}
@@ -47,21 +49,25 @@ class FindingCorrelator:
      if f['engine'] not in m['engines']:m['engines'].append(f['engine'])
      m['cross_tool_confidence']=min(1,max(m['cross_tool_confidence'],f['confidence'])+.12);m['evidence']=m['evidence']+[f['evidence']]
      if self.SEVERITY.get(f['severity'],2)>self.SEVERITY.get(m['severity'],2):m['severity']=f['severity']
-  for f in merged.values():
-   f['validated_by_multiple_tools']=len(f['engines'])>=2;f['status']='UNVERIFIED — HUMAN REVIEW REQUIRED';f['priority']=round(self.SEVERITY.get(f['severity'],2)*25+min(25,f['cross_tool_confidence']*25)+(10 if f['validated_by_multiple_tools'] else 0),2)
+  for f in merged.values():f['validated_by_multiple_tools']=len(f['engines'])>=2;f['status']='UNVERIFIED — HUMAN REVIEW REQUIRED';f['priority']=round(self.SEVERITY.get(f['severity'],2)*25+min(25,f['cross_tool_confidence']*25)+(10 if f['validated_by_multiple_tools'] else 0),2)
   return sorted(merged.values(),key=lambda x:x['priority'],reverse=True)
 class ResearchPipeline:
- def __init__(self):self.acquirer=TargetAcquirer();self.tools=SecurityToolchain();self.correlator=FindingCorrelator();self.scope=ScopeResolver();self.build=BuildDetector()
+ def __init__(self):self.acquirer=TargetAcquirer();self.tools=SecurityToolchain();self.correlator=FindingCorrelator();self.scope=ScopeResolver();self.build=BuildDetector();self.mapper=ProtocolMapper();self.logic=BusinessLogicEngine();self.prioritizer=FindingPrioritizer();self.history=HistoricalIntelligence()
  def plan(self,opportunity,public_evidence=''):
   scope=self.scope.resolve(opportunity,public_evidence);available=self.tools.inventory();return {'opportunity':opportunity,'scope':scope,'target_map':TargetMap().build(scope,{'detected':[],'primary':None}),'targets':[t.to_dict() for t in self.acquirer.extract_targets(opportunity,public_evidence)],'tools':available,'authorization_required':True,'active_testing_allowed':bool(opportunity.get('authorization_confirmed'))}
- def analyze_local(self,source_dir,protocol_name,source_code=None,authorization_confirmed=False,tools=None):
+ def analyze_local(self,source_dir,protocol_name,source_code=None,authorization_confirmed=False,tools=None,opportunity=None):
   if not authorization_confirmed:return {'status':'blocked','reason':'Explicit authorization confirmation is required before analysis/testing.','findings':[]}
-  build=self.build.detect(source_dir);groups=[]
+  if not Path(source_dir).is_dir():return {'status':'error','reason':'source directory does not exist','findings':[]}
+  build=self.build.detect(source_dir);protocol_map=self.mapper.map(source_dir);hypotheses=self.logic.hypotheses(source_dir,protocol_map);groups=[]
   if source_code:
    try:
     fs=AdvancedWeb3Analyzer().analyze_protocol(source_code,protocol_name);groups.append({'engine':'existing_analyzer','findings':[{'title':f.vulnerability_type,'severity':f.severity,'description':f.description,'location':f.location,'confidence':f.confidence,'evidence':f.proof_of_concept} for f in fs]})
    except Exception as e:groups.append({'engine':'existing_analyzer','findings':[],'error':str(e)})
-  chosen=tools or ['slither','aderyn','wake']
-  tr=self.tools.analyze(source_dir,chosen,120)
+  tr=self.tools.analyze(source_dir,tools or ['slither','aderyn','wake'],120)
   for r in tr.get('results',[]):groups.append({'engine':r.get('name','tool'),'findings':r.get('findings',[])})
-  return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'tool_results':tr,'correlated_findings':self.correlator.correlate(groups),'review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
+  correlated=self.correlator.correlate(groups)
+  for h in hypotheses:
+   h['independent_signals']=1;h['reproducibility']=0.0;h['economic_impact_score']=.65 if h['category'] in ('asset_flow','accounting','oracle','privilege') else .4;h['attacker_privilege']='user'
+  combined=correlated+hypotheses
+  ranked=self.prioritizer.rank(combined,opportunity)
+  return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'protocol_map':protocol_map,'business_logic_hypotheses':hypotheses[:100],'tool_results':tr,'correlated_findings':ranked,'historical_search_leads':[self.history.search_urls(f.get('title',''),f.get('category','')) for f in ranked[:10]],'review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
