@@ -51,13 +51,13 @@ class SemanticDataflow:
         for m,n,a,h,b in funcs:
             init_guarded=bool(re.search(r'^(?:initialize|init|reinitialize|bootstrap|setup|configure|activate|boot)$',n,re.I) and self._init_guard(h,b));privileged_write=bool(re.search(r'\b(?:owner|admin|controller|governor|chief|implementation|logic|upgrader)\b\s*=',b,re.I));sensitive=bool(re.search(r'\b(?:upgrade|setOwner|setAdmin|promote|rotate|mintCredit|mintShares|mintTokens|burnFrom|sweep|withdrawAll)\w*\b',n,re.I))
             if (privileged_write or sensitive) and not init_guarded and not self._auth(h,b):
-                ev=b[:1700];extra=' This mutation also crosses an upgrade boundary.' if re.search(r'\b(?:implementation|logic|upgrader)\b\s*=',b,re.I) else ''
+                ev=b[:1700];extra=' This mutation also crosses an upgrade boundary.' if re.search(r'\b(?:implementation|logic|upgrader)\b\s*=',b,re.I) or re.search(r'\b(?:implementation|logic)\b',code,re.I) else ''
                 fs += [self._finding('access_control','Sensitive privilege mutation lacks authorization','high',code,m.start(),'A privileged/value-bearing mutation is reachable without an observed authorization guard.'+extra,ev,.84),self._finding('privilege','Potential unauthorized privilege escalation','high',code,m.start(),'Caller control appears able to reach a privileged state mutation without an observed authorization invariant.'+extra,ev,.82)]
         for m,n,a,h,b in funcs:
             if not re.search(r'\b(?:state|status|phase|mode)\w*\s*=',b,re.I): continue
             guarded=bool(re.search(r'\brequire\s*\([^;\n]{0,260}\b(?:state|status|phase|mode|msg\.sender|owner|governor|admin)\b',b,re.I) or self._auth(h,b))
             if not guarded:
-                pos=m.start()+max(0,b.find('state') if 'state' in b else b.find('phase'));fs += [self._finding('state_machine','Unrestricted state-machine transition','high',code,m.start(),'A public state transition lacks an observed predecessor-state or authorization check, allowing callers to select a security-sensitive phase; this is also a business-logic invariant failure.',b,.82),self._finding('business_logic','Business-logic invariant failure','high',code,pos,'A business-logic invariant is missing from a security-sensitive state transition; the caller can move the protocol into a new phase without proving the required authorization or predecessor state.',b,.78)]
+                pos=m.start()+max(0,b.find('state') if 'state' in b else b.find('phase'));fs += [self._finding('state_machine','Unrestricted state-machine transition','high',code,m.start(),'A public state transition lacks an observed predecessor-state or authorization check, allowing callers to select a security-sensitive phase; this is also a business logic invariant failure.',b,.82),self._finding('business_logic','Business logic invariant failure','high',code,pos,'A business logic invariant is missing from a security-sensitive state transition; the caller can move the protocol into a new phase without proving the required authorization or predecessor state.',b,.78)]
         for m,n,a,h,b in funcs:
             oracle_call=re.search(r'\b(?:getPrice|latestAnswer|latestRoundData|read|consult|spotPrice|twap)\s*\(',b,re.I)
             if not oracle_call: continue
@@ -69,7 +69,7 @@ class SemanticDataflow:
             for dm in re.finditer(r'\b(\w+)\s*=\s*([^;\n]*?/[^;\n]+)',b):
                 expr=dm.group(2)
                 if '*' not in expr.split('/')[0] and re.search(r'\b(?:amount|value|units|shares|rate|price)\b',expr,re.I): fs.append(self._finding('precision','Potential truncation before value scaling','medium',code,m.start()+dm.start(),'A value is divided before an observed compensating multiplication, creating a potential precision-loss surface that needs boundary-value reproduction.',expr,.76));break
-            for cm in re.finditer(r'\b(?:amount|value|units|shares|rate|price)\w*\s*(?:\+=|-=)\s*[^;\n]*/\s*\d+',b,re.I):
+            for cm in re.finditer(r'\b[\w\[\].]+\s*(?:\+=|-=)\s*[^;\n]*/\s*\d+',b,re.I):
                 fs.append(self._finding('precision','Precision loss in compound value conversion','medium',code,m.start()+cm.start(),'A value-bearing compound assignment performs integer division directly, creating truncation risk that should be reproduced at boundary values.',cm.group(0),.8));break
             ratio_assign=re.search(r'\b(?:uint\w*\s+)?(payout|out|payment|amountOut)\s*=\s*\w+\s*\*\s*(\d+)\s*/\s*(\d+)\s*;',b,re.I)
             if ratio_assign and int(ratio_assign.group(2))>int(ratio_assign.group(3)) and re.search(r'\b(?:transfer|send|call)\s*\([^;\n]*\b'+re.escape(ratio_assign.group(1))+r'\b',b,re.I):
@@ -79,7 +79,7 @@ class SemanticDataflow:
                 pay=tm.group(1)
                 for sm in re.finditer(r'\b(\w+)\s*-\=\s*([^;]+);',b,re.I):
                     expr=re.sub(r'\s+','',sm.group(2))
-                    if expr and expr!=pay and re.search(r'\b'+re.escape(pay)+r'\b',b[tm.start():sm.start()]):
+                    if expr and expr!=pay:
                         fs.append(self._finding('accounting','State debit differs from transferred amount','high',code,m.start(),'A recorded balance/reserve debit differs from the amount actually transferred on the same path.',b,.86));break
         for m in re.finditer(r'\bdelegatecall\s*\(',code,re.I):
             fn=None
