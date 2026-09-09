@@ -71,11 +71,10 @@ class ResearchPipeline:
   build=self.build.detect(source_dir);protocol_map=self.mapper.map(source_dir);attack_paths=self.paths.paths(protocol_map);hypotheses=self.logic.hypotheses(source_dir,protocol_map);groups=[]
   if source_code:
    try:
-    fs=AdvancedWeb3Analyzer().analyze_protocol(source_code,protocol_name)
-    lines=source_code.splitlines()
+    fs=AdvancedWeb3Analyzer().analyze_protocol(source_code,protocol_name);lines=source_code.splitlines()
     def function_for_location(location):
-     mm=re.search(r'line\s+(\d+)',str(location or ''),re.I);line=int(mm.group(1)) if mm else 1;current=''
-     for idx,text in enumerate(lines[:max(1,line)],1):
+     mm=re.search(r'line\s+(\d+)',str(location or ''),re.I);line=int(mm.group(1)) if mm else 1;lo=max(1,line-12);hi=min(len(lines),line+12);current=''
+     for text in lines[lo-1:hi]:
       fm=re.search(r'\bfunction\s+(\w+)\s*\(',text)
       if fm:current=fm.group(1)
      return current
@@ -88,8 +87,7 @@ class ResearchPipeline:
    h['independent_signals']=1;h['reproducibility']=0.0;h['economic_impact_score']=.65 if h['category'] in ('asset_flow','accounting','oracle','privilege') else .4;h['attacker_privilege']='user';h['economic_analysis']=self.economics.analyze(h);h['status']=STATUS;h['kind']='exploratory_hypothesis'
   combined=correlated
   for f in combined:
-   f['attack_paths']=[p for p in attack_paths if p.get('entry_point','')==f'{f.get("contract","")}.{f.get("function","")}' or p.get('entry_point','').split('.')[-1]==str(f.get('function',''))][:3] or (attack_paths[:2] if attack_paths else [])
-   f['economic_analysis']=self.economics.analyze(f);f['status']=STATUS
+   f['attack_paths']=[p for p in attack_paths if p.get('entry_point','')==f'{f.get("contract","")}.{f.get("function","")}' or p.get('entry_point','').split('.')[-1]==str(f.get('function',''))][:3] or (attack_paths[:2] if attack_paths else []);f['economic_analysis']=self.economics.analyze(f);f['status']=STATUS
   ranked=self.prioritizer.rank(combined,opportunity);candidate_validation=self.tools.generate_and_validate(source_dir,ranked[:10],True,180);symbolic=self.tools.run_symbolic(source_dir,180);invariants=self.tools.run_invariants(source_dir,180);upgrade_surface=self.tools.upgrade_surface(source_dir)
   for c in candidate_validation.get('candidates',[]):
    for ex in c.get('execution',[]):
