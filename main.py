@@ -4,15 +4,17 @@ from advanced_web3_analyzer import AdvancedWeb3Analyzer,generate_detailed_report
 from bounty_engine import OpportunityStore,PublicProgramDiscovery,build_report
 from security_toolchain import SecurityToolchain
 from research_pipeline import ResearchPipeline
+from research_queue import ResearchQueue
+from economic_analysis import EconomicAnalyzer
 from target_resolution import TargetMap
-app=Flask(__name__);store=OpportunityStore(os.environ.get('BUGHUNTER_DB','bughunter.db'));discovery=PublicProgramDiscovery();toolchain=SecurityToolchain();research=ResearchPipeline()
+app=Flask(__name__);store=OpportunityStore(os.environ.get('BUGHUNTER_DB','bughunter.db'));discovery=PublicProgramDiscovery();toolchain=SecurityToolchain();research=ResearchPipeline();queue=ResearchQueue(os.environ.get('BUGHUNTER_DB','bughunter.db'));economics=EconomicAnalyzer()
 def fd(f):return {'id':f.id,'type':f.vulnerability_type,'severity':f.severity,'category':f.category,'location':f.location,'description':f.description,'poc':f.proof_of_concept,'impact':f.economic_impact,'confidence':f.confidence,'bounty_low':f.bounty_estimate_low,'bounty_high':f.bounty_estimate_high,'requires_verification':True,'status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
 def _refresh(sources=None):
  found,diagnostics=discovery.discover_public_indexes(sources)
  for o in found:store.upsert(o)
  return found,diagnostics
 @app.get('/api/health')
-def health():return jsonify({'status':'Web3 BugHunter running','human_review_required':True,'auto_submission':False,'live_public_discovery':True})
+def health():return jsonify({'status':'Web3 BugHunter running','human_review_required':True,'auto_submission':False,'live_public_discovery':True,'continuous_queue':True})
 @app.get('/api/security-tools')
 def security_tools():return jsonify({'tools':toolchain.inventory(),'license_policy':'Use tools according to their licenses; no automatic installation.'})
 @app.post('/api/security-tools/analyze')
@@ -26,7 +28,7 @@ def security_tools_fuzz():
  d=request.get_json(silent=True) or {}
  if not d.get('source_dir'):return jsonify({'error':'source_dir is required'}),400
  if not d.get('authorized_scope_verified'):return jsonify({'error':'authorized_scope_verified must be true'}),403
- return jsonify(toolchain.fuzz(str(d['source_dir']),True,str(d.get('framework','auto')),int(d.get('timeout',180))))
+ return jsonify(toolchain.fuzz(str(d['source_dir']),True,str(d.get('framework','auto')),int(d.get('timeout',180)),d.get('findings')))
 @app.post('/api/research/plan')
 def research_plan():
  d=request.get_json(silent=True) or {};return jsonify(research.plan(d.get('opportunity') or {},str(d.get('public_evidence',''))))
@@ -42,12 +44,35 @@ def research_analyze():
  d=request.get_json(silent=True) or {}
  if not d.get('authorized_scope_verified'):return jsonify({'error':'authorized_scope_verified must be true'}),403
  return jsonify(research.analyze_local(str(d.get('source_dir','')),str(d.get('protocol_name','authorized-target')),d.get('source_code'),True,d.get('tools'),d.get('opportunity')))
+@app.post('/api/research/economic-analysis')
+def research_economic():
+ d=request.get_json(silent=True) or {};f=d.get('finding') or {}
+ if not d.get('authorized_scope_verified'):return jsonify({'error':'authorized_scope_verified must be true'}),403
+ return jsonify(economics.analyze(f,str(d.get('context',''))))
 @app.get('/api/research/history-leads')
 def research_history_leads():
  d=request.args;return jsonify({'search_leads':research.history.search_urls(d.get('title',''),d.get('category','')), 'note':'Public-search leads only; similarity is not a duplicate determination.'})
 @app.post('/api/research/duplicate-check')
 def research_duplicate_check():
  d=request.get_json(silent=True) or {};return jsonify({'matches':research.history.compare(d.get('finding') or {},d.get('historical') or []),'status':'POSSIBLE DUPLICATE — HUMAN REVIEW REQUIRED'})
+@app.post('/api/research/queue/fill')
+def queue_fill():
+ d=request.get_json(silent=True) or {};ops=d.get('opportunities')
+ if ops is None:ops=store.list(200)
+ queue.fill(ops,int(d.get('limit',50)));return jsonify({'status':'queued','queue':queue.list(200)})
+@app.post('/api/research/queue/next')
+def queue_next():
+ item=queue.next();return jsonify({'status':'selected' if item else 'empty','item':item,'bounded':True,'human_review_required':True})
+@app.post('/api/research/queue/<opportunity_id>')
+def queue_update(opportunity_id):
+ d=request.get_json(silent=True) or {};queue.update(opportunity_id,str(d.get('status','queued')),int(d.get('finding_count',0)),d.get('metadata'));return jsonify({'status':'updated','queue':queue.list(200)})
+@app.get('/api/research/queue')
+def queue_list():return jsonify({'queue':queue.list(min(int(request.args.get('limit',100)),200))})
+@app.post('/api/research/performance')
+def performance_record():
+ d=request.get_json(silent=True) or {};queue.record_performance(str(d.get('opportunity_id','')),str(d.get('vulnerability_class','unknown')),str(d.get('outcome','unknown')),float(d.get('research_minutes',0)),bool(d.get('duplicate')),bool(d.get('false_positive')),float(d.get('bounty_usd',0)),str(d.get('tool','')));return jsonify({'status':'recorded','performance':queue.performance()})
+@app.get('/api/research/performance')
+def performance():return jsonify({'performance':queue.performance()})
 @app.get('/api/opportunities')
 def opportunities():return jsonify({'opportunities':store.list(min(int(request.args.get('limit',50)),200)),'workflow':'Discover → Evaluate → Rank → Select → Scope → Acquire → Map → Analyze → Validate → Report → Human Review → Manual Submission'})
 @app.post('/api/discover')
@@ -59,17 +84,17 @@ def discover():
 def refresh_opportunities():
  found,diagnostics=_refresh((request.get_json(silent=True) or {}).get('sources'));return jsonify({'status':'live_discovery_complete','discovered':len(found),'diagnostics':diagnostics,'opportunities':store.list(100)})
 @app.get('/api/opportunities/ranked')
-def ranked_opportunities():return jsonify({'opportunities':store.list(min(int(request.args.get('limit',50)),200)),'selection_basis':'Expected reward + finding likelihood + severity + attack surface + difficulty + research-time efficiency + competition risk'})
+def ranked_opportunities():return jsonify({'opportunities':store.list(min(int(request.args.get('limit',50)),200)),'selection_basis':'Expected reward + finding likelihood + severity + attack surface + difficulty + research-time efficiency + competition risk + observed research performance'})
 @app.post('/api/opportunities/select-best')
 def select_best():
  found,diagnostics=_refresh();ranked=store.list(200);actionable=[o for o in ranked if o.get('status')=='active' and o.get('scope_size',0)>0]
  if not actionable:return jsonify({'status':'no_actionable_opportunity','discovered':len(found),'diagnostics':diagnostics,'human_review_required':True}),404
- best=actionable[0];store.set_hunt_status(best['id'],'Investigating','Highest expected-value public opportunity; scope must be human-verified before testing.');return jsonify({'status':'selected','opportunity':best,'discovered':len(found),'diagnostics':diagnostics,'human_review_required':True,'authorization_note':'Public discovery is not authorization.'})
+ best=actionable[0];store.set_hunt_status(best['id'],'Investigating','Highest expected-value public opportunity; scope must be human-verified before testing.');queue.enqueue(best['id'],best.get('score',0),best);return jsonify({'status':'selected','opportunity':best,'discovered':len(found),'diagnostics':diagnostics,'human_review_required':True,'authorization_note':'Public discovery is not authorization.'})
 @app.post('/api/opportunities/<opportunity_id>/select')
 def select_opportunity(opportunity_id):
  match=next((o for o in store.list(200) if o['id']==opportunity_id),None)
  if not match:return jsonify({'error':'Opportunity not found'}),404
- store.set_hunt_status(opportunity_id,'Investigating','Selected by ranking; scope requires human verification.');return jsonify({'status':'selected','opportunity':match,'human_review_required':True})
+ store.set_hunt_status(opportunity_id,'Investigating','Selected by ranking; scope requires human verification.');queue.enqueue(opportunity_id,match.get('score',0),match);return jsonify({'status':'selected','opportunity':match,'human_review_required':True})
 @app.get('/api/hunting-history')
 def hunting_history():return jsonify({'history':store.history()})
 @app.post('/api/hunting-history/<opportunity_id>')
