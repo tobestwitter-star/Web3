@@ -1,18 +1,22 @@
 {
-  "version": 1,
+  "version": 2,
   "authorization": "local_fixture_authorized",
   "fixtures": [
     {"name":"ReentrancyVault","file":"ReentrancyVault.sol","expected":["reentrancy","external_call"],"safe":false},
     {"name":"ReentrancySafe","file":"ReentrancySafe.sol","expected":[],"safe":true},
     {"name":"AccessControlVault","file":"AccessControlVault.sol","expected":["privilege","access_control"],"safe":false},
+    {"name":"AccessControlSafe","file":"AccessControlSafe.sol","expected":[],"safe":true},
     {"name":"AccountingPool","file":"AccountingPool.sol","expected":["accounting","asset_flow"],"safe":false},
     {"name":"OracleLending","file":"OracleLending.sol","expected":["oracle"],"safe":false},
     {"name":"PrecisionPool","file":"PrecisionPool.sol","expected":["precision","accounting"],"safe":false},
     {"name":"SignatureReplay","file":"SignatureReplay.sol","expected":["signature","replay"],"safe":false},
+    {"name":"SignatureSafe","file":"SignatureSafe.sol","expected":[],"safe":true},
     {"name":"UnsafeDelegate","file":"UnsafeDelegate.sol","expected":["delegatecall","upgrade"],"safe":false},
     {"name":"InitializerBug","file":"InitializerBug.sol","expected":["initialization","upgrade","privilege"],"safe":false},
+    {"name":"InitializerSafe","file":"InitializerSafe.sol","expected":[],"safe":true},
     {"name":"StateMachine","file":"StateMachine.sol","expected":["state_machine","business_logic"],"safe":false},
     {"name":"CallbackToken","file":"CallbackToken.sol","expected":["external_call","callback"],"safe":false},
+    {"name":"CallbackSafe","file":"CallbackSafe.sol","expected":[],"safe":true},
     {"name":"SafeControls","file":"SafeControls.sol","expected":[],"safe":true}
   ]
 }
