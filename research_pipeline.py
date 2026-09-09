@@ -1,6 +1,6 @@
 """Authorized target acquisition, build-aware research and finding correlation."""
 from __future__ import annotations
-import hashlib, os, re, subprocess
+import hashlib,os,re,subprocess
 from dataclasses import dataclass,asdict
 from pathlib import Path
 from typing import Any,Dict,List
@@ -8,19 +8,19 @@ from urllib.parse import urlparse
 from advanced_web3_analyzer import AdvancedWeb3Analyzer
 from security_toolchain import SecurityToolchain
 from target_resolution import ScopeResolver,BuildDetector,TargetMap
-from protocol_research import ProtocolMapper,BusinessLogicEngine,FindingPrioritizer
+from protocol_research import ProtocolMapper,BusinessLogicEngine,FindingPrioritizer,AttackPathEngine
 from historical_intelligence import HistoricalIntelligence
-
+from economic_analysis import EconomicAnalyzer
 @dataclass
 class Target:
- name:str; source_url:str; kind:str='repository'; branch:str=''; authorized:bool=False; scope_evidence:str=''; addresses:List[str]=None; contracts:List[str]=None; assets:List[str]=None
+ name:str;source_url:str;kind:str='repository';branch:str='';authorized:bool=False;scope_evidence:str='';addresses:List[str]=None;contracts:List[str]=None;assets:List[str]=None
  def to_dict(self):
   d=asdict(self)
   for k in ('addresses','contracts','assets'):d[k]=d[k] or []
   return d
 class TargetAcquirer:
  GIT_RE=re.compile(r'https?://(?:www\.)?github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?(?:/tree/[^\s#]+)?');ADDRESS_RE=re.compile(r'\b0x[a-fA-F0-9]{40}\b')
- def extract_targets(self,opportunity:Dict[str,Any],public_text=''):
+ def extract_targets(self,opportunity,public_text=''):
   scope=ScopeResolver().resolve(opportunity,public_text);targets=[]
   for repo in scope['repositories']:targets.append(Target(opportunity.get('name','target'),repo,authorized=False,scope_evidence=public_text,addresses=scope['contract_addresses'],assets=scope['assets']))
   for addr in scope['contract_addresses']:targets.append(Target(opportunity.get('name','target'),'',kind='evm_contract',authorized=False,scope_evidence=public_text,addresses=[addr],assets=scope['assets']))
@@ -30,14 +30,12 @@ class TargetAcquirer:
   if urlparse(target.source_url).netloc.lower()!='github.com':return {'ok':False,'error':'only public GitHub repositories are supported'}
   Path(workspace).mkdir(parents=True,exist_ok=True);dest=os.path.join(workspace,hashlib.sha256(target.source_url.encode()).hexdigest()[:12])
   if os.path.isdir(dest):return {'ok':True,'path':dest,'cached':True}
-  try:
-   p=subprocess.run(['git','clone','--depth','1',target.source_url,dest],capture_output=True,text=True,timeout=180);return {'ok':p.returncode==0,'path':dest if p.returncode==0 else None,'stdout':p.stdout[-4000:],'stderr':p.stderr[-6000:]}
+  try:p=subprocess.run(['git','clone','--depth','1',target.source_url,dest],capture_output=True,text=True,timeout=180);return {'ok':p.returncode==0,'path':dest if p.returncode==0 else None,'stdout':p.stdout[-4000:],'stderr':p.stderr[-6000:]}
   except (FileNotFoundError,subprocess.TimeoutExpired) as e:return {'ok':False,'error':str(e)}
 class FindingCorrelator:
  SEVERITY={'critical':4,'high':3,'medium':2,'low':1,'informational':0}
  def normalize(self,f,engine):
-  text=' '.join(str(f.get(k,'')) for k in ('title','vulnerability','description','message','check'));loc=str(f.get('location') or f.get('path') or f.get('source') or '')
-  sev=str(f.get('severity') or 'medium').lower();return {'engine':engine,'title':f.get('title') or f.get('vulnerability') or f.get('check') or engine,'description':text[:4000],'location':loc,'severity':sev,'confidence':float(f.get('confidence',.45) or .45),'evidence':f.get('evidence',[]),'fingerprint':hashlib.sha256((re.sub(r'\s+',' ',text.lower())+'|'+loc.lower()).encode()).hexdigest()}
+  text=' '.join(str(f.get(k,'')) for k in ('title','vulnerability','description','message','check'));loc=str(f.get('location') or f.get('path') or f.get('source') or '');sev=str(f.get('severity') or 'medium').lower();return {'id':f.get('id') or hashlib.sha256((text+'|'+loc).encode()).hexdigest()[:16],'engine':engine,'title':f.get('title') or f.get('vulnerability') or f.get('check') or engine,'description':text[:4000],'location':loc,'severity':sev,'confidence':float(f.get('confidence',.45) or .45),'evidence':f.get('evidence',[]),'fingerprint':hashlib.sha256((re.sub(r'\s+',' ',text.lower())+'|'+loc.lower()).encode()).hexdigest()}
  def correlate(self,groups):
   merged={}
   for g in groups:
@@ -52,31 +50,29 @@ class FindingCorrelator:
   for f in merged.values():f['validated_by_multiple_tools']=len(f['engines'])>=2;f['status']='UNVERIFIED — HUMAN REVIEW REQUIRED';f['priority']=round(self.SEVERITY.get(f['severity'],2)*25+min(25,f['cross_tool_confidence']*25)+(10 if f['validated_by_multiple_tools'] else 0),2)
   return sorted(merged.values(),key=lambda x:x['priority'],reverse=True)
 class ResearchPipeline:
- def __init__(self):self.acquirer=TargetAcquirer();self.tools=SecurityToolchain();self.correlator=FindingCorrelator();self.scope=ScopeResolver();self.build=BuildDetector();self.mapper=ProtocolMapper();self.logic=BusinessLogicEngine();self.prioritizer=FindingPrioritizer();self.history=HistoricalIntelligence()
+ def __init__(self):self.acquirer=TargetAcquirer();self.tools=SecurityToolchain();self.correlator=FindingCorrelator();self.scope=ScopeResolver();self.build=BuildDetector();self.mapper=ProtocolMapper();self.paths=AttackPathEngine();self.logic=BusinessLogicEngine();self.prioritizer=FindingPrioritizer();self.history=HistoricalIntelligence();self.economics=EconomicAnalyzer()
  def plan(self,opportunity,public_evidence=''):
   scope=self.scope.resolve(opportunity,public_evidence);available=self.tools.inventory();return {'opportunity':opportunity,'scope':scope,'target_map':TargetMap().build(scope,{'detected':[],'primary':None}),'targets':[t.to_dict() for t in self.acquirer.extract_targets(opportunity,public_evidence)],'tools':available,'authorization_required':True,'active_testing_allowed':bool(opportunity.get('authorization_confirmed'))}
  def analyze_local(self,source_dir,protocol_name,source_code=None,authorization_confirmed=False,tools=None,opportunity=None):
   if not authorization_confirmed:return {'status':'blocked','reason':'Explicit authorization confirmation is required before analysis/testing.','findings':[]}
   if not Path(source_dir).is_dir():return {'status':'error','reason':'source directory does not exist','findings':[]}
-  build=self.build.detect(source_dir);protocol_map=self.mapper.map(source_dir);hypotheses=self.logic.hypotheses(source_dir,protocol_map);groups=[]
+  build=self.build.detect(source_dir);protocol_map=self.mapper.map(source_dir);attack_paths=self.paths.paths(protocol_map);hypotheses=self.logic.hypotheses(source_dir,protocol_map);groups=[]
   if source_code:
-   try:
-    fs=AdvancedWeb3Analyzer().analyze_protocol(source_code,protocol_name);groups.append({'engine':'existing_analyzer','findings':[{'title':f.vulnerability_type,'severity':f.severity,'description':f.description,'location':f.location,'confidence':f.confidence,'evidence':f.proof_of_concept} for f in fs]})
+   try:fs=AdvancedWeb3Analyzer().analyze_protocol(source_code,protocol_name);groups.append({'engine':'existing_analyzer','findings':[{'id':f.id,'title':f.vulnerability_type,'severity':f.severity,'description':f.description,'location':f.location,'confidence':f.confidence,'evidence':f.proof_of_concept} for f in fs]})
    except Exception as e:groups.append({'engine':'existing_analyzer','findings':[],'error':str(e)})
   tr=self.tools.analyze(source_dir,tools or ['slither','aderyn','wake'],120)
   for r in tr.get('results',[]):groups.append({'engine':r.get('name','tool'),'findings':r.get('findings',[])})
   correlated=self.correlator.correlate(groups)
   for h in hypotheses:
-   h['independent_signals']=1;h['reproducibility']=0.0;h['economic_impact_score']=.65 if h['category'] in ('asset_flow','accounting','oracle','privilege') else .4;h['attacker_privilege']='user'
+   h['independent_signals']=1;h['reproducibility']=0.0;h['economic_impact_score']=.65 if h['category'] in ('asset_flow','accounting','oracle','privilege') else .4;h['attacker_privilege']='user';h['economic_analysis']=self.economics.analyze(h)
   combined=correlated+hypotheses
-  ranked=self.prioritizer.rank(combined,opportunity)
-  candidate_validation=self.tools.generate_and_validate(source_dir,ranked[:10],authorization_confirmed=True,timeout=180)
-  # Only actual execution evidence can raise reproducibility; no generated test is treated as confirmation.
+  for f in combined:
+   f['attack_paths']=[p for p in attack_paths if p['sequence'][0]['contract']==str(f.get('contract',''))][:3] or attack_paths[:2] if attack_paths else []
+  ranked=self.prioritizer.rank(combined,opportunity);candidate_validation=self.tools.generate_and_validate(source_dir,ranked[:10],True,180)
   for c in candidate_validation.get('candidates',[]):
    for ex in c.get('execution',[]):
     if ex.get('status')=='executed':
      for f in ranked:
-      if f.get('id')==c.get('finding_id'):
-       f['execution_evidence']={'returncode':ex.get('returncode'),'candidate_failed':ex.get('candidate_failed'),'stdout':ex.get('stdout','')[-12000:],'stderr':ex.get('stderr','')[-8000:]};f['reproducibility']=0.35 if ex.get('candidate_failed') else 0.05;f['status']='UNVERIFIED — HUMAN REVIEW REQUIRED'
+      if f.get('id')==c.get('finding_id'):f['execution_evidence']={'returncode':ex.get('returncode'),'candidate_failed':ex.get('candidate_failed'),'stdout':ex.get('stdout','')[-12000:],'stderr':ex.get('stderr','')[-8000:]};f['reproducibility']=.35 if ex.get('candidate_failed') else .05;f['status']='UNVERIFIED — HUMAN REVIEW REQUIRED'
   ranked=self.prioritizer.rank(ranked,opportunity)
-  return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'protocol_map':protocol_map,'business_logic_hypotheses':hypotheses[:100],'tool_results':tr,'correlated_findings':ranked,'exploit_test_candidates':candidate_validation,'historical_search_leads':[self.history.search_urls(f.get('title',''),f.get('category','')) for f in ranked[:10]],'review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
+  return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'protocol_map':protocol_map,'attack_paths':attack_paths,'business_logic_hypotheses':hypotheses[:100],'tool_results':tr,'correlated_findings':ranked,'exploit_test_candidates':candidate_validation,'historical_search_leads':[self.history.search_urls(f.get('title',''),f.get('category','')) for f in ranked[:10]],'review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
