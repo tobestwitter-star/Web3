@@ -4,6 +4,7 @@ from advanced_web3_analyzer import AdvancedWeb3Analyzer,generate_detailed_report
 from bounty_engine import OpportunityStore,PublicProgramDiscovery,build_report
 from security_toolchain import SecurityToolchain
 from research_pipeline import ResearchPipeline
+from target_resolution import TargetMap
 app=Flask(__name__);store=OpportunityStore(os.environ.get('BUGHUNTER_DB','bughunter.db'));discovery=PublicProgramDiscovery();toolchain=SecurityToolchain();research=ResearchPipeline()
 def fd(f):return {'id':f.id,'type':f.vulnerability_type,'severity':f.severity,'category':f.category,'location':f.location,'description':f.description,'poc':f.proof_of_concept,'impact':f.economic_impact,'confidence':f.confidence,'bounty_low':f.bounty_estimate_low,'bounty_high':f.bounty_estimate_high,'requires_verification':True,'status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
 def _refresh(sources=None):
