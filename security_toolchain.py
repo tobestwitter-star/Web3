@@ -2,8 +2,8 @@
 from __future__ import annotations
 import json, os, re, shutil, subprocess
 from pathlib import Path
-from typing import Any
 TOOLS={'slither':{'binary':'slither','kind':'static','license':'AGPL-3.0-or-later','project':'crytic/slither'},'aderyn':{'binary':'aderyn','kind':'static','license':'GPL-3.0','project':'Cyfrin/aderyn'},'forge':{'binary':'forge','kind':'test-fuzz','license':'Apache-2.0 OR MIT','project':'foundry-rs/foundry'},'echidna':{'binary':'echidna-test','kind':'property-fuzz','license':'AGPL-3.0','project':'crytic/echidna'},'medusa':{'binary':'medusa','kind':'coverage-guided-fuzz','license':'AGPL-3.0','project':'crytic/medusa'},'wake':{'binary':'wake','kind':'static-fuzz-framework','license':'ISC','project':'Ackee-Blockchain/wake'},'halmos':{'binary':'halmos','kind':'symbolic-testing','license':'AGPL-3.0','project':'a16z/halmos'}}
+STATUS='UNVERIFIED — HUMAN REVIEW REQUIRED'
 class SecurityToolchain:
  def inventory(self):return [{**{'name':n,'available':bool((p:=shutil.which(m['binary']))),'binary':p},**m} for n,m in TOOLS.items()]
  def detect_build(self,source_dir):
@@ -47,31 +47,32 @@ class SecurityToolchain:
   if not shutil.which('forge'):return {'ok':False,'skipped':True,'error':'forge not installed'}
   return self._run(['forge','test','--json','-vvv'],source_dir,timeout)
  def run_symbolic(self,source_dir,timeout=180,functions=None):
-  if not shutil.which('halmos'):return {'tool':'halmos','status':'skipped','available':False,'error':'halmos not installed','findings':[]}
-  cmd=['halmos']
+  if not shutil.which('halmos'):return {'tool':'halmos','status':'skipped','available':False,'error':'halmos not installed','findings':[],'evidence_level':'not_executed','review_status':STATUS}
+  cmd=['halmos'];
   if functions:
    for fn in functions[:20]:cmd.extend(['--function',str(fn)])
-  r=self._run(cmd,source_dir,timeout)
-  text=(r.get('stdout','')+'\n'+r.get('stderr',''))
-  counterexamples=re.findall(r'Counterexample:\s*([^\n]+)',text,re.I)
-  failures=re.findall(r'\[(?:FAIL|FAILED)\][^\n]*',text,re.I)
-  return {'tool':'halmos','status':'executed','result':r,'counterexamples':counterexamples[:20],'assertion_failures':failures[:20],'evidence_level':'symbolic_counterexample' if counterexamples else ('symbolic_assertion_failure' if failures else 'no_symbolic_failure_observed'),'confirmed_vulnerability':False,'review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
+  r=self._run(cmd,source_dir,timeout);text=(r.get('stdout','')+'\n'+r.get('stderr',''))
+  counterexamples=re.findall(r'(?:Counterexample|counterexample):\s*([^\n]+)',text)
+  failures=re.findall(r'^\s*\[(?:FAIL|FAILED)\][^\n]*|^\s*(?:FAIL|FAILED):[^\n]*',text,re.I|re.M)
+  return {'tool':'halmos','status':'executed','result':r,'counterexamples':counterexamples[:20],'assertion_failures':failures[:20],'evidence_level':'symbolic_counterexample' if counterexamples else ('symbolic_assertion_failure' if failures else 'no_symbolic_failure_observed'),'confirmed_vulnerability':False,'review_status':STATUS}
  def run_invariants(self,source_dir,timeout=180):
-  if not shutil.which('forge'):return {'tool':'forge-invariant','status':'skipped','error':'forge not installed','evidence_level':'not_executed'}
-  r=self._run(['forge','test','--match-test','invariant_','--json','-vvv'],source_dir,timeout)
-  text=r.get('stdout','')+'\n'+r.get('stderr','')
-  failed=bool(re.search(r'fail|revert|panic|assert',text,re.I)) and not r.get('ok',False)
-  return {'tool':'forge-invariant','status':'executed','result':r,'invariant_failure_observed':failed,'evidence_level':'invariant_failure' if failed else 'no_invariant_failure_observed','confirmed_vulnerability':False,'review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
+  if not shutil.which('forge'):return {'tool':'forge-invariant','status':'skipped','error':'forge not installed','evidence_level':'not_executed','review_status':STATUS}
+  r=self._run(['forge','test','--match-test','invariant_','--json','-vvv'],source_dir,timeout);text=r.get('stdout','')+'\n'+r.get('stderr','');obj=self._json(r.get('stdout',''))
+  failed=False;failure_records=[]
+  if isinstance(obj,dict):
+   blob=json.dumps(obj).lower();failed=any(x in blob for x in ('"status":"failure"','"status":"failed"','"success":false','"result":"failure"'))
+  if not failed:failed=bool(re.search(r'^\s*\[(?:FAIL|FAILED)\][^\n]*|^\s*(?:FAIL|FAILED):[^\n]*',text,re.I|re.M))
+  if failed:failure_records=re.findall(r'^\s*\[(?:FAIL|FAILED)\][^\n]*|^\s*(?:FAIL|FAILED):[^\n]*',text,re.I|re.M)[:20]
+  return {'tool':'forge-invariant','status':'executed','result':r,'invariant_failure_observed':failed,'failure_records':failure_records,'evidence_level':'invariant_failure' if failed else 'no_invariant_failure_observed','confirmed_vulnerability':False,'review_status':STATUS}
  def upgrade_surface(self,source_dir):
-  root=Path(source_dir);signals=[]
-  patterns={'delegatecall':r'\bdelegatecall\s*\(','proxy':r'(?:TransparentUpgradeableProxy|UUPS|ERC1967|upgradeTo(?:AndCall)?)','initializer':r'\b(?:initializer|reinitializer)\b','implementation_slot':r'(?:_IMPLEMENTATION_SLOT|IMPLEMENTATION_SLOT|proxiableUUID)','selfdestruct':r'\bselfdestruct\s*\('}
+  root=Path(source_dir);signals=[];patterns={'delegatecall':r'\bdelegatecall\s*\(','proxy':r'(?:TransparentUpgradeableProxy|UUPS|ERC1967|upgradeTo(?:AndCall)?)','initializer':r'\b(?:initializer|reinitializer)\b','implementation_slot':r'(?:_IMPLEMENTATION_SLOT|IMPLEMENTATION_SLOT|proxiableUUID)','selfdestruct':r'\bselfdestruct\s*\('}
   for p in root.rglob('*.sol'):
    if any(x in p.parts for x in ('lib','node_modules','.git','out')):continue
    try:text=p.read_text(encoding='utf-8',errors='replace')
    except OSError:continue
    for kind,pat in patterns.items():
     for m in list(re.finditer(pat,text,re.I))[:20]:signals.append({'kind':kind,'file':str(p.relative_to(root)),'line':text[:m.start()].count('\n')+1,'evidence':text[max(0,m.start()-100):m.end()+180]})
-  return {'signals':signals,'risk_classes':sorted({s['kind'] for s in signals}),'status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
+  return {'signals':signals,'risk_classes':sorted({s['kind'] for s in signals}),'status':STATUS}
  def generate_and_validate(self,source_dir,findings,authorization_confirmed=False,timeout=180):
   if not authorization_confirmed:return {'status':'blocked','reason':'authorization_required','candidates':[]}
   from exploit_harness import HarnessGenerator,HarnessRunner
@@ -83,17 +84,12 @@ class SecurityToolchain:
    for h in generated.get('harnesses',[]):
     if h.get('framework')=='foundry' and h.get('status')=='generated':
      ex=runner.run_foundry(source_dir,h['test_path'],timeout);ex['evidence']=classifier.classify(ex,h);execution.append(ex)
-   candidates.append({'finding_id':finding.get('id'),'title':finding.get('title'),'generated':generated,'execution':execution,'status':'UNVERIFIED — HUMAN REVIEW REQUIRED'})
-  return {'status':'candidate_validation_complete','candidates':candidates,'review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED','note':'A failing generated test is evidence only. A candidate is not treated as reproduced unless the harness contains an explicit security assertion and the assertion fails.'}
+   candidates.append({'finding_id':finding.get('id'),'title':finding.get('title'),'generated':generated,'execution':execution,'status':STATUS})
+  return {'status':'candidate_validation_complete','candidates':candidates,'review_status':STATUS,'note':'A failing generated test is evidence only. A candidate is not treated as reproduced unless the harness contains an explicit security assertion and the assertion fails.'}
  def fuzz(self,source_dir,authorization_confirmed=False,framework='auto',timeout=180,findings=None):
   if not authorization_confirmed:return {'status':'blocked','reason':'authorization_required','results':[]}
-  build=self.detect_build(source_dir);chosen=framework if framework!='auto' else build.get('primary')
-  generated=self.generate_and_validate(source_dir,findings,True,min(timeout,180)) if findings else {'status':'not_run','candidates':[]}
+  build=self.detect_build(source_dir);chosen=framework if framework!='auto' else build.get('primary');generated=self.generate_and_validate(source_dir,findings,True,min(timeout,180)) if findings else {'status':'not_run','candidates':[]}
   if chosen in ('foundry','hardhat','solidity-generic') or chosen is None:return {'status':'bounded_local_validation','framework':'foundry','build':build,'results':[self._bounded_forge(source_dir,min(timeout,180))],'generated_candidates':generated,'destructive_live_testing':False}
-  if chosen in ('echidna','medusa'):
-   binary='echidna-test' if chosen=='echidna' else 'medusa'
-   if not shutil.which(binary):return {'status':'bounded_local_validation','framework':chosen,'build':build,'results':[{'ok':False,'skipped':True,'error':f'{binary} not installed'}],'generated_candidates':generated,'destructive_live_testing':False}
-   cmd=[binary,'--help'] if chosen=='echidna' else [binary,'fuzz','--help'];return {'status':'bounded_local_validation','framework':chosen,'build':build,'results':[self._run(cmd,source_dir,min(timeout,180))],'generated_candidates':generated,'destructive_live_testing':False}
   return {'status':'bounded_local_validation','framework':chosen,'build':build,'results':[],'generated_candidates':generated,'destructive_live_testing':False}
  def analyze(self,source_dir,tools=None,timeout=120):
   requested=tools or ['slither','aderyn','wake'];build=self.detect_build(source_dir);results=[]
@@ -101,6 +97,5 @@ class SecurityToolchain:
    meta=TOOLS.get(name)
    if not meta:results.append({'name':name,'ok':False,'error':'unsupported tool'});continue
    if not shutil.which(meta['binary']):results.append({'name':name,'skipped':True,'error':'not installed',**meta});continue
-   cmd={'slither':['slither','.','--json','-'],'aderyn':['aderyn','--output','-','.'],'wake':['wake','detect'],'forge':['forge','test','--json'],'medusa':['medusa','fuzz','--help'],'echidna':['echidna-test','--help'],'halmos':['halmos']}[name]
-   r=self._run(cmd,source_dir,timeout);results.append({'name':name,**meta,'result':r,'findings':self.parse_result(name,r)})
+   cmd={'slither':['slither','.','--json','-'],'aderyn':['aderyn','--output','-','.'],'wake':['wake','detect'],'forge':['forge','test','--json'],'medusa':['medusa','fuzz','--help'],'echidna':['echidna-test','--help'],'halmos':['halmos']}[name];r=self._run(cmd,source_dir,timeout);results.append({'name':name,**meta,'result':r,'findings':self.parse_result(name,r)})
   return {'authorized_local_analysis_only':True,'build':build,'results':results,'upgrade_surface':self.upgrade_surface(source_dir)}
