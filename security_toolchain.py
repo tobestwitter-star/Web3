@@ -49,22 +49,20 @@ class SecurityToolchain:
  def generate_and_validate(self,source_dir,findings,authorization_confirmed=False,timeout=180):
   if not authorization_confirmed:return {'status':'blocked','reason':'authorization_required','candidates':[]}
   from exploit_harness import HarnessGenerator,HarnessRunner
-  gen=HarnessGenerator(source_dir);runner=HarnessRunner();candidates=[]
+  from evidence_classifier import EvidenceClassifier
+  gen=HarnessGenerator(source_dir);runner=HarnessRunner();classifier=EvidenceClassifier();candidates=[]
   for finding in (findings or [])[:10]:
-   if float(finding.get('priority_score',0)) < 45: continue
+   if float(finding.get('priority_score',finding.get('priority',0))) < 45: continue
    generated=gen.generate(finding,['foundry','echidna','medusa']);execution=[]
    for h in generated.get('harnesses',[]):
     if h.get('framework')=='foundry' and h.get('status')=='generated':
-     execution.append(runner.run_foundry(source_dir,h['test_path'],timeout))
-   # Execution is evidence only; no result is promoted to confirmed automatically.
+     ex=runner.run_foundry(source_dir,h['test_path'],timeout);ex['evidence']=classifier.classify(ex,h);execution.append(ex)
    candidates.append({'finding_id':finding.get('id'),'title':finding.get('title'),'generated':generated,'execution':execution,'status':'UNVERIFIED — HUMAN REVIEW REQUIRED'})
-  return {'status':'candidate_validation_complete','candidates':candidates,'review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED','note':'A failing generated test is evidence for human review, not automatic vulnerability confirmation.'}
+  return {'status':'candidate_validation_complete','candidates':candidates,'review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED','note':'A failing generated test is evidence only. A candidate is not treated as reproduced unless the harness contains an explicit security assertion and the assertion fails.'}
  def fuzz(self,source_dir,authorization_confirmed=False,framework='auto',timeout=180,findings=None):
   if not authorization_confirmed:return {'status':'blocked','reason':'authorization_required','results':[]}
   build=self.detect_build(source_dir);chosen=framework if framework!='auto' else build.get('primary')
-  if findings:
-   generated=self.generate_and_validate(source_dir,findings,True,min(timeout,180))
-  else: generated={'status':'not_run','candidates':[]}
+  generated=self.generate_and_validate(source_dir,findings,True,min(timeout,180)) if findings else {'status':'not_run','candidates':[]}
   if chosen in ('foundry','hardhat','solidity-generic') or chosen is None:return {'status':'bounded_local_validation','framework':'foundry','build':build,'results':[self._bounded_forge(source_dir,min(timeout,180))],'generated_candidates':generated,'destructive_live_testing':False}
   if chosen in ('echidna','medusa'):
    binary='echidna-test' if chosen=='echidna' else 'medusa'
