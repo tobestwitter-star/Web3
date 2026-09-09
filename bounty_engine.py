@@ -39,7 +39,7 @@ class OpportunityStore:
         with self._connect() as db:rows=db.execute('SELECT * FROM hunts ORDER BY updated_at DESC LIMIT ?',(limit,)).fetchall()
         return [dict(zip(['id','opportunity_id','status','finding_count','notes','updated_at'],r)) for r in rows]
 class PublicProgramDiscovery:
-    SOURCES={'immunefi_api':'https://immunefi.com/public-api/bounties.json','immunefi_snapshots':'https://raw.githubusercontent.com/pratraut/Immunefi-Bug-Bounty-Programs-Snapshots/main/projects.json','hackerone':'https://www.hackerone.com/bug-bounty-programs','code4rena':'https://code4rena.com/contests','sherlock':'https://audits.sherlock.xyz/contests'}
+    SOURCES={'immunefi_api':'https://immunefi.com/public-api/bounties.json','immunefi_snapshots':'https://raw.githubusercontent.com/pratraut/Immunefi-Bug-Bounty-Programs-Snapshots/main/projects.json','hackerone':'https://www.hackerone.com/bug-bounty-programs','code4rena':'https://code4rena.com/contests','sherlock':'https://audits.sherlock.xyz/contests','codehawks':'https://codehawks.cyfrin.io/contests','cantina':'https://cantina.xyz/opportunities/competitions'}
     WEB3_TERMS=re.compile(r'web3|crypto|blockchain|defi|dao|dex|wallet|token|ethereum|solidity|smart contract|protocol|stablecoin|nft|layer[- ]?2',re.I); BOUNTY=re.compile(r'(?:up to|maximum|max\.?|bounty(?:\s+of)?|reward(?:\s+of)?|prize(?:\s+pool)?(?:\s+of)?)\s*[:\-]?\s*(?:\$|USD\s*)?([\d,]+(?:\.\d+)?)\s*([km])?',re.I); LINK=re.compile(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',re.I|re.S)
     def fetch(self,url,timeout=15):
         req=urllib.request.Request(url,headers={'User-Agent':USER_AGENT,'Accept':'text/html,application/xhtml+xml,application/json'}); 
@@ -77,8 +77,8 @@ class PublicProgramDiscovery:
         except Exception as exc:return [],{'source':source,'url':url,'reachable':False,'error':str(exc)}
         results=[]
         for href,label in self._candidate_links(final,body):
-            if not (self.WEB3_TERMS.search(label) or source in ('code4rena','sherlock')):continue
-            contest=source in ('code4rena','sherlock') or 'contest' in href.lower();o=self._make(source,label,href,'active',self._reward(label),1,True,'Public listing; human must verify exact scope, exclusions, dates and testing rules before testing.',{'platform_index':final,'public_listing':True,'discovery_method':'public_html_link_extraction'},.65 if contest else .55,.55 if contest else .45);results.append(o)
+            if not (self.WEB3_TERMS.search(label) or source in ('code4rena','sherlock','codehawks','cantina')):continue
+            contest=source in ('code4rena','sherlock','codehawks','cantina') or 'contest' in href.lower();o=self._make(source,label,href,'active',self._reward(label),1,True,'Public listing; human must verify exact scope, exclusions, dates and testing rules before testing.',{'platform_index':final,'public_listing':True,'discovery_method':'public_html_link_extraction'},.65 if contest else .55,.55 if contest else .45);results.append(o)
             if len(results)>=max_entries:break
         if not results:results=[self._make(f'feed:{source}',f'{source.title()} public program index',final,'feed_only',self._reward(self._clean(body)),0,True,'Index reachable but no actionable individual target extracted; not authorization.',{'platform_index':final},.8,.2)]
         return results,{'source':source,'url':final,'reachable':True,'bytes':len(body),'entries':len(results)}
