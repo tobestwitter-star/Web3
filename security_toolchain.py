@@ -3,7 +3,7 @@ from __future__ import annotations
 import json, os, re, shutil, subprocess
 from pathlib import Path
 from typing import Any
-TOOLS={'slither':{'binary':'slither','kind':'static','license':'AGPL-3.0-or-later','project':'crytic/slither'},'aderyn':{'binary':'aderyn','kind':'static','license':'GPL-3.0','project':'Cyfrin/aderyn'},'forge':{'binary':'forge','kind':'test-fuzz','license':'Apache-2.0 OR MIT','project':'foundry-rs/foundry'},'echidna':{'binary':'echidna-test','kind':'property-fuzz','license':'AGPL-3.0','project':'crytic/echidna'},'medusa':{'binary':'medusa','kind':'coverage-guided-fuzz','license':'AGPL-3.0','project':'crytic/medusa'},'wake':{'binary':'wake','kind':'static-fuzz-framework','license':'ISC','project':'Ackee-Blockchain/wake'}}
+TOOLS={'slither':{'binary':'slither','kind':'static','license':'AGPL-3.0-or-later','project':'crytic/slither'},'aderyn':{'binary':'aderyn','kind':'static','license':'GPL-3.0','project':'Cyfrin/aderyn'},'forge':{'binary':'forge','kind':'test-fuzz','license':'Apache-2.0 OR MIT','project':'foundry-rs/foundry'},'echidna':{'binary':'echidna-test','kind':'property-fuzz','license':'AGPL-3.0','project':'crytic/echidna'},'medusa':{'binary':'medusa','kind':'coverage-guided-fuzz','license':'AGPL-3.0','project':'crytic/medusa'},'wake':{'binary':'wake','kind':'static-fuzz-framework','license':'ISC','project':'Ackee-Blockchain/wake'},'halmos':{'binary':'halmos','kind':'symbolic-testing','license':'AGPL-3.0','project':'a16z/halmos'}}
 class SecurityToolchain:
  def inventory(self):return [{**{'name':n,'available':bool((p:=shutil.which(m['binary']))),'binary':p},**m} for n,m in TOOLS.items()]
  def detect_build(self,source_dir):
@@ -46,6 +46,32 @@ class SecurityToolchain:
  def _bounded_forge(self,source_dir,timeout):
   if not shutil.which('forge'):return {'ok':False,'skipped':True,'error':'forge not installed'}
   return self._run(['forge','test','--json','-vvv'],source_dir,timeout)
+ def run_symbolic(self,source_dir,timeout=180,functions=None):
+  if not shutil.which('halmos'):return {'tool':'halmos','status':'skipped','available':False,'error':'halmos not installed','findings':[]}
+  cmd=['halmos']
+  if functions:
+   for fn in functions[:20]:cmd.extend(['--function',str(fn)])
+  r=self._run(cmd,source_dir,timeout)
+  text=(r.get('stdout','')+'\n'+r.get('stderr',''))
+  counterexamples=re.findall(r'Counterexample:\s*([^\n]+)',text,re.I)
+  failures=re.findall(r'\[(?:FAIL|FAILED)\][^\n]*',text,re.I)
+  return {'tool':'halmos','status':'executed','result':r,'counterexamples':counterexamples[:20],'assertion_failures':failures[:20],'evidence_level':'symbolic_counterexample' if counterexamples else ('symbolic_assertion_failure' if failures else 'no_symbolic_failure_observed'),'confirmed_vulnerability':False,'review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
+ def run_invariants(self,source_dir,timeout=180):
+  if not shutil.which('forge'):return {'tool':'forge-invariant','status':'skipped','error':'forge not installed','evidence_level':'not_executed'}
+  r=self._run(['forge','test','--match-test','invariant_','--json','-vvv'],source_dir,timeout)
+  text=r.get('stdout','')+'\n'+r.get('stderr','')
+  failed=bool(re.search(r'fail|revert|panic|assert',text,re.I)) and not r.get('ok',False)
+  return {'tool':'forge-invariant','status':'executed','result':r,'invariant_failure_observed':failed,'evidence_level':'invariant_failure' if failed else 'no_invariant_failure_observed','confirmed_vulnerability':False,'review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
+ def upgrade_surface(self,source_dir):
+  root=Path(source_dir);signals=[]
+  patterns={'delegatecall':r'\bdelegatecall\s*\(','proxy':r'(?:TransparentUpgradeableProxy|UUPS|ERC1967|upgradeTo(?:AndCall)?)','initializer':r'\b(?:initializer|reinitializer)\b','implementation_slot':r'(?:_IMPLEMENTATION_SLOT|IMPLEMENTATION_SLOT|proxiableUUID)','selfdestruct':r'\bselfdestruct\s*\('}
+  for p in root.rglob('*.sol'):
+   if any(x in p.parts for x in ('lib','node_modules','.git','out')):continue
+   try:text=p.read_text(encoding='utf-8',errors='replace')
+   except OSError:continue
+   for kind,pat in patterns.items():
+    for m in list(re.finditer(pat,text,re.I))[:20]:signals.append({'kind':kind,'file':str(p.relative_to(root)),'line':text[:m.start()].count('\n')+1,'evidence':text[max(0,m.start()-100):m.end()+180]})
+  return {'signals':signals,'risk_classes':sorted({s['kind'] for s in signals}),'status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
  def generate_and_validate(self,source_dir,findings,authorization_confirmed=False,timeout=180):
   if not authorization_confirmed:return {'status':'blocked','reason':'authorization_required','candidates':[]}
   from exploit_harness import HarnessGenerator,HarnessRunner
@@ -75,6 +101,6 @@ class SecurityToolchain:
    meta=TOOLS.get(name)
    if not meta:results.append({'name':name,'ok':False,'error':'unsupported tool'});continue
    if not shutil.which(meta['binary']):results.append({'name':name,'skipped':True,'error':'not installed',**meta});continue
-   cmd={'slither':['slither','.','--json','-'],'aderyn':['aderyn','--output','-','.'],'wake':['wake','detect'],'forge':['forge','test','--json'],'medusa':['medusa','fuzz','--help'],'echidna':['echidna-test','--help']}[name]
+   cmd={'slither':['slither','.','--json','-'],'aderyn':['aderyn','--output','-','.'],'wake':['wake','detect'],'forge':['forge','test','--json'],'medusa':['medusa','fuzz','--help'],'echidna':['echidna-test','--help'],'halmos':['halmos']}[name]
    r=self._run(cmd,source_dir,timeout);results.append({'name':name,**meta,'result':r,'findings':self.parse_result(name,r)})
-  return {'authorized_local_analysis_only':True,'build':build,'results':results}
+  return {'authorized_local_analysis_only':True,'build':build,'results':results,'upgrade_surface':self.upgrade_surface(source_dir)}
