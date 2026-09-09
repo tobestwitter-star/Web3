@@ -14,3 +14,13 @@ def test_store_and_status_history():
 def test_report_is_human_gated():
     o=PublicProgramDiscovery().discover_from_json([{'name':'Example','url':'https://example.com','max_bounty_usd':10000}], 'test')[0]
     report=build_report([{'title':'Potential issue'}],o.to_dict()); assert report['do_not_auto_submit'] is True; assert 'UNVERIFIED' in report['review_status']
+
+def test_discovery_includes_reputable_web3_contest_sources():
+    sources=PublicProgramDiscovery.SOURCES
+    assert {'immunefi_api','hackerone','code4rena','sherlock','codehawks','cantina'} <= set(sources)
+
+def test_immunefi_normalization_preserves_scope_and_reward_metadata():
+    programs=PublicProgramDiscovery().discover_from_json([{'project':'Example','slug':'example','maxBounty':250000,'assets':['github.com/example'], 'endDate':'2999-01-01','rules':'safe harbor'}], 'immunefi_api')
+    assert programs[0].max_bounty_usd==250000
+    assert programs[0].metadata['assets']==['github.com/example']
+    assert programs[0].metadata['rules']=='safe harbor'
