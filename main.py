@@ -3,7 +3,8 @@ from flask import Flask, jsonify, request
 from advanced_web3_analyzer import AdvancedWeb3Analyzer, generate_detailed_report
 from bounty_engine import OpportunityStore, PublicProgramDiscovery, build_report
 from security_toolchain import SecurityToolchain
-app=Flask(__name__); store=OpportunityStore(os.environ.get('BUGHUNTER_DB','bughunter.db')); discovery=PublicProgramDiscovery(); toolchain=SecurityToolchain()
+from research_pipeline import ResearchPipeline
+app=Flask(__name__); store=OpportunityStore(os.environ.get('BUGHUNTER_DB','bughunter.db')); discovery=PublicProgramDiscovery(); toolchain=SecurityToolchain(); research=ResearchPipeline()
 def fd(f): return {'id':f.id,'type':f.vulnerability_type,'severity':f.severity,'category':f.category,'location':f.location,'description':f.description,'poc':f.proof_of_concept,'impact':f.economic_impact,'confidence':f.confidence,'bounty_low':f.bounty_estimate_low,'bounty_high':f.bounty_estimate_high,'requires_verification':True,'status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
 def _refresh(sources=None):
     found,diagnostics=discovery.discover_public_indexes(sources)
@@ -19,8 +20,22 @@ def security_tools_analyze():
     if not source_dir:return jsonify({'error':'source_dir is required'}),400
     if not authorized:return jsonify({'error':'authorized_scope_verified must be true before external analyzers can run'}),403
     return jsonify(toolchain.analyze(source_dir,data.get('tools'),int(data.get('timeout',120))))
+@app.post('/api/research/plan')
+def research_plan():
+    data=request.get_json(silent=True) or {}; opp=data.get('opportunity') or {}; return jsonify(research.plan(opp,str(data.get('public_evidence',''))))
+@app.post('/api/research/acquire')
+def research_acquire():
+    data=request.get_json(silent=True) or {}; tdata=data.get('target') or {}; authorized=bool(data.get('authorized_scope_verified'))
+    from research_pipeline import Target
+    target=Target(str(tdata.get('name','target')),str(tdata.get('source_url','')),str(tdata.get('kind','repository')),str(tdata.get('branch','')),authorized,str(tdata.get('scope_evidence','')),tdata.get('addresses',[]),tdata.get('contracts',[]),tdata.get('assets',[]))
+    return jsonify(research.acquirer.clone_public_repo(target,str(data.get('workspace') or os.environ.get('RESEARCH_WORKSPACE','research-workspace')),authorized))
+@app.post('/api/research/analyze')
+def research_analyze():
+    data=request.get_json(silent=True) or {}
+    if not data.get('authorized_scope_verified'): return jsonify({'error':'authorized_scope_verified must be true before research analysis'}),403
+    return jsonify(research.analyze_local(str(data.get('source_dir','')),str(data.get('protocol_name','authorized-target')),data.get('source_code'),True,data.get('tools')))
 @app.get('/api/opportunities')
-def opportunities(): return jsonify({'opportunities':store.list(min(int(request.args.get('limit',50)),200)),'workflow':'Discover → Evaluate → Rank → Select → Investigate → Validate → Generate Report → Human Review → Manual Submission'})
+def opportunities(): return jsonify({'opportunities':store.list(min(int(request.args.get('limit',50)),200)),'workflow':'Discover → Evaluate → Rank → Select → Scope → Acquire → Analyze → Correlate → Validate → Report → Human Review → Manual Submission'})
 @app.post('/api/discover')
 def discover():
     data=request.get_json(silent=True) or {}
