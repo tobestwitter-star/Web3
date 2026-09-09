@@ -22,7 +22,7 @@ class SemanticDataflow:
         s=head+' '+body
         return bool(re.search(r'\b(?:initializer|reinitializer|onlyInitializing|_disableInitializers|once)\b',s,re.I) or re.search(r'\b(?:initialized|ready|setupDone)\b\s*(?:==|!=)\s*(?:false|0)\b',body,re.I) or re.search(r'\brequire\s*\([^;\n]{0,160}!\s*(?:initialized|ready|setupDone)\b',body,re.I))
     def _state_write(self,b):
-        return re.search(r'\b(?:balance|balances|pending|shares|debt|state|status|phase|mode|owner|admin|controller|governor|implementation|logic|total|reserve|credits|quota|nonce)\w*(?:\s*\[[^\]]+\])?\s*(?:=|\+=|-=|\*=|\+\+|--)',b,re.I)
+        return re.search(r'\b(?:balance|balances|pending|shares|debt|state|status|phase|mode|owner|admin|controller|governor|implementation|logic|total|reserve|cash|credits|quota|nonce)\w*(?:\s*\[[^\]]+\])?\s*(?:=|\+=|-=|\*=|\+\+|--)',b,re.I)
     def analyze(self,code,name='target'):
         fs=[];funcs=self._functions(code);interfaces={};iface_vars={}
         for im in re.finditer(r'interface\s+(\w+)\s*\{(.*?)\}',code,re.I|re.S):
@@ -57,8 +57,7 @@ class SemanticDataflow:
             if not re.search(r'\b(?:state|status|phase|mode)\w*\s*=',b,re.I): continue
             guarded=bool(re.search(r'\brequire\s*\([^;\n]{0,260}\b(?:state|status|phase|mode|msg\.sender|owner|governor|admin)\b',b,re.I) or self._auth(h,b))
             if not guarded:
-                pos=m.start()+max(0,b.find('state') if 'state' in b else b.find('phase'))
-                fs += [self._finding('state_machine','Unrestricted state-machine transition','high',code,m.start(),'A public state transition lacks an observed predecessor-state or authorization check, allowing callers to select a security-sensitive phase.',b,.82),self._finding('business_logic','Business-logic invariant failure','high',code,pos,'A business-logic invariant is missing from a security-sensitive state transition; the caller can move the protocol into a new phase without proving the required authorization or predecessor state.',b,.78)]
+                pos=m.start()+max(0,b.find('state') if 'state' in b else b.find('phase'));fs += [self._finding('state_machine','Unrestricted state-machine transition','high',code,m.start(),'A public state transition lacks an observed predecessor-state or authorization check, allowing callers to select a security-sensitive phase.',b,.82),self._finding('business_logic','Business-logic invariant failure','high',code,pos,'A business-logic invariant is missing from a security-sensitive state transition; the caller can move the protocol into a new phase without proving the required authorization or predecessor state.',b,.78)]
         for m,n,a,h,b in funcs:
             oracle_call=re.search(r'\b(?:getPrice|latestAnswer|latestRoundData|read|consult|spotPrice|twap)\s*\(',b,re.I)
             if not oracle_call: continue
@@ -73,11 +72,18 @@ class SemanticDataflow:
             ratio_assign=re.search(r'\b(?:uint\w*\s+)?(payout|out|payment|amountOut)\s*=\s*\w+\s*\*\s*(\d+)\s*/\s*(\d+)\s*;',b,re.I)
             if ratio_assign and int(ratio_assign.group(2))>int(ratio_assign.group(3)) and re.search(r'\b(?:transfer|send|call)\s*\([^;\n]*\b'+re.escape(ratio_assign.group(1))+r'\b',b,re.I):
                 fs += [self._finding('asset_flow','Asset payout exceeds accounted unit','high',code,m.start(),'The withdrawal path transfers a scaled-up payout while the caller balance is debited in the original unit.',b,.9),self._finding('accounting','Accounting conservation mismatch','high',code,m.start(),'Recorded units and transferred assets use different quantities on the withdrawal path.',b,.88)]
+            transfers=list(re.finditer(r'\b(?:transfer|send)\s*\(\s*(\w+)\s*\)',b,re.I))
+            for tm in transfers:
+                pay=tm.group(1)
+                for sm in re.finditer(r'\b(\w+)\s*-\=\s*([^;]+);',b,re.I):
+                    expr=re.sub(r'\s+','',sm.group(2));
+                    if expr and expr!=pay and re.search(r'\b'+re.escape(pay)+r'\b',b[tm.start():sm.start()] or b):
+                        fs.append(self._finding('accounting','State debit differs from transferred amount','high',code,m.start(),'A recorded balance/reserve debit differs from the amount actually transferred on the same path.',b,.86));break
         for m in re.finditer(r'\bdelegatecall\s*\(',code,re.I):
             fn=None
             for fm,nn,aa,hh,bb in funcs:
                 if fm.start()<=m.start()<=fm.end()+len(bb): fn=(hh,bb);break
             governed=self._auth(*(fn or ('','')))
             if not governed:
-                ev=code[max(0,m.start()-350):m.end()+650];fs.append(self._finding('delegatecall','Unsafe delegatecall / implementation trust boundary','high',code,m.start(),'A delegatecall creates an execution-context trust boundary and the reachable path is not visibly governed; local reproduction is required.',ev,.8));fs.append(self._finding('upgradeability','Unprotected delegatecall-backed upgradeability','critical',code,m.start(),'A delegatecall path is not visibly governed, so implementation control can cross the proxy boundary without an observed privileged check.',ev,.86))
+                ev=code[max(0,m.start()-350):m.end()+650];fs += [self._finding('delegatecall','Unsafe delegatecall / implementation trust boundary','high',code,m.start(),'A delegatecall creates an execution-context trust boundary and the reachable path is not visibly governed; local reproduction is required.',ev,.8),self._finding('upgradeability','Unprotected delegatecall-backed upgradeability','critical',code,m.start(),'A delegatecall path is not visibly governed, so implementation control can cross the proxy boundary without an observed privileged check.',ev,.86)]
         return fs
