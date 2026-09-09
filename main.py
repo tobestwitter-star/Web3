@@ -7,23 +7,50 @@ app=Flask(__name__); store=OpportunityStore(os.environ.get('BUGHUNTER_DB','bughu
 
 def fd(f): return {'id':f.id,'type':f.vulnerability_type,'severity':f.severity,'category':f.category,'location':f.location,'description':f.description,'poc':f.proof_of_concept,'impact':f.economic_impact,'confidence':f.confidence,'bounty_low':f.bounty_estimate_low,'bounty_high':f.bounty_estimate_high,'requires_verification':True,'status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
 
+def _refresh(sources=None):
+    found,diagnostics=discovery.discover_public_indexes(sources)
+    for o in found: store.upsert(o)
+    return found,diagnostics
+
 @app.get('/api/health')
-def health(): return jsonify({'status':'Web3 BugHunter running','human_review_required':True,'auto_submission':False})
+def health(): return jsonify({'status':'Web3 BugHunter running','human_review_required':True,'auto_submission':False,'live_public_discovery':True})
 
 @app.get('/api/opportunities')
 def opportunities(): return jsonify({'opportunities':store.list(min(int(request.args.get('limit',50)),200)),'workflow':'Discover → Evaluate → Rank → Select → Investigate → Validate → Generate Report → Human Review → Manual Submission'})
 
 @app.post('/api/discover')
 def discover():
-    data=request.get_json(silent=True) or {}; records=data.get('programs'); found=discovery.discover_from_json(records,data.get('source','manual-import')) if records is not None else discovery.discover_public_indexes()
+    data=request.get_json(silent=True) or {}
+    if data.get('programs') is not None:
+        found=discovery.discover_from_json(data.get('programs'),data.get('source','manual-import')); diagnostics=[{'source':data.get('source','manual-import'),'mode':'import','entries':len(found)}]
+    else:
+        sources=data.get('sources')
+        found,diagnostics=_refresh(sources)
     for o in found: store.upsert(o)
-    return jsonify({'status':'discovery_complete','count':len(found),'opportunities':store.list(100)})
+    return jsonify({'status':'discovery_complete','count':len(found),'diagnostics':diagnostics,'opportunities':store.list(100)})
+
+@app.post('/api/opportunities/refresh')
+def refresh_opportunities():
+    data=request.get_json(silent=True) or {}; found,diagnostics=_refresh(data.get('sources')); return jsonify({'status':'live_discovery_complete','discovered':len(found),'diagnostics':diagnostics,'opportunities':store.list(100)})
+
+@app.get('/api/opportunities/ranked')
+def ranked_opportunities():
+    return jsonify({'opportunities':store.list(min(int(request.args.get('limit',50)),200)),'selection_basis':'Expected reward + valid-finding likelihood + severity + attack surface + source availability + difficulty + research-time efficiency + competition risk'})
+
+@app.post('/api/opportunities/select-best')
+def select_best():
+    found,diagnostics=_refresh()
+    ranked=store.list(200)
+    actionable=[o for o in ranked if o.get('status')=='active' and o.get('scope_size',0)>0]
+    if not actionable: return jsonify({'status':'no_actionable_opportunity','discovered':len(found),'diagnostics':diagnostics,'human_review_required':True}),404
+    best=actionable[0]; store.set_hunt_status(best['id'],'Investigating','Automatically selected as highest expected-value actionable public opportunity. Scope must still be human-verified before testing.')
+    return jsonify({'status':'selected','opportunity':best,'discovered':len(found),'diagnostics':diagnostics,'human_review_required':True,'authorization_note':'Public discovery is not authorization; verify program scope and rules before investigation.'})
 
 @app.post('/api/opportunities/<opportunity_id>/select')
 def select_opportunity(opportunity_id):
     match=next((o for o in store.list(200) if o['id']==opportunity_id),None)
     if not match: return jsonify({'error':'Opportunity not found'}),404
-    store.set_hunt_status(opportunity_id,'Investigating','Selected by expected-value ranking.')
+    store.set_hunt_status(opportunity_id,'Investigating','Selected by expected-value ranking; scope requires human verification before testing.')
     return jsonify({'status':'selected','opportunity':match,'human_review_required':True})
 
 @app.get('/api/hunting-history')
