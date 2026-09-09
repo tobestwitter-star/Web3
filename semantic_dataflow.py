@@ -16,24 +16,24 @@ class SemanticDataflow:
         return {'title':title,'severity':sev,'category':cat,'location':f"Source evidence near line {code[:pos].count(chr(10))+1}",'description':desc,'confidence':conf,'evidence':[evidence[:2200]],'status':STATUS}
     def _auth(self,head,body):
         s=head+' '+body
-        if re.search(r'\b(?:onlyOwner|onlyRole|hasRole|authorized|isOwner|_authorizeUpgrade|nonReentrant|gate|auth)\b',s,re.I): return True
+        if re.search(r'\b(?:onlyOwner|onlyAdmin|onlyRole|onlyGovernor|onlyController|hasRole|authorized|isOwner|_authorizeUpgrade|nonReentrant|gate|auth)\b',s,re.I): return True
         return bool(re.search(r'\brequire\s*\([^;\n]{0,260}\bmsg\.sender\b',s,re.I))
     def _init_guard(self,head,body):
         s=head+' '+body
         return bool(re.search(r'\b(?:initializer|reinitializer|onlyInitializing|_disableInitializers|once)\b',s,re.I) or re.search(r'\b(?:initialized|ready|setupDone)\b\s*(?:==|!=)\s*(?:false|0)\b',body,re.I) or re.search(r'\brequire\s*\([^;\n]{0,160}!\s*(?:initialized|ready|setupDone)\b',body,re.I))
     def _state_write(self,b):
-        return re.search(r'\b(?:balance|balances|shares|debt|state|status|phase|mode|owner|admin|controller|governor|implementation|logic|total|reserve|credits|quota|nonce)\w*(?:\s*\[[^\]]+\])?\s*(?:=|\+=|-=|\*=|\+\+|--)',b,re.I)
+        return re.search(r'\b(?:balance|balances|pending|shares|debt|state|status|phase|mode|owner|admin|controller|governor|implementation|logic|total|reserve|credits|quota|nonce)\w*(?:\s*\[[^\]]+\])?\s*(?:=|\+=|-=|\*=|\+\+|--)',b,re.I)
     def analyze(self,code,name='target'):
-        fs=[];funcs=self._functions(code);interfaces={}
+        fs=[];funcs=self._functions(code);interfaces={};iface_vars={}
         for im in re.finditer(r'interface\s+(\w+)\s*\{(.*?)\}',code,re.I|re.S):
             interfaces[im.group(1)]={m.group(1) for m in re.finditer(r'function\s+(\w+)\s*\([^)]*\)\s*([^;]*);',im.group(2),re.I) if not re.search(r'\b(?:view|pure)\b',m.group(2),re.I)}
-        iface_vars=set()
         for typ,var in re.findall(r'\b(\w+)\s+(?:public|private|internal)?\s*(\w+)\s*;',code):
-            if typ in interfaces: iface_vars.add(var)
-        external_patterns=r'(?:address\s*\([^)]*\)|\w+)\s*\.\s*(?:call|send|transfer)\s*(?:\{|\()'
+            if typ in interfaces: iface_vars[var]=interfaces[typ]
         for m,n,a,h,b in funcs:
-            calls=list(re.finditer(external_patterns,b,re.I))
-            for iv in iface_vars: calls += list(re.finditer(r'\b'+re.escape(iv)+r'\s*\.\s*\w+\s*\(',b,re.I))
+            calls=list(re.finditer(r'(?:address\s*\([^)]*\)|\w+)\s*\.\s*(?:call|send|transfer)\s*(?:\{|\()',b,re.I))
+            for iv,methods in iface_vars.items():
+                for cm in re.finditer(r'\b'+re.escape(iv)+r'\s*\.\s*(\w+)\s*\(',b,re.I):
+                    if cm.group(1) in methods: calls.append(cm)
             if calls:
                 first=min(calls,key=lambda x:x.start());sw=self._state_write(b[first.end():])
                 if sw and not re.search(r'\b(?:nonReentrant|lock(?:ed)?\s*=\s*true)\b',h+' '+b,re.I):
@@ -56,24 +56,27 @@ class SemanticDataflow:
         for m,n,a,h,b in funcs:
             if not re.search(r'\b(?:state|status|phase|mode)\w*\s*=',b,re.I): continue
             guarded=bool(re.search(r'\brequire\s*\([^;\n]{0,260}\b(?:state|status|phase|mode|msg\.sender|owner|governor|admin)\b',b,re.I) or self._auth(h,b))
-            if not guarded: fs.append(self._finding('state_machine','Unrestricted state-machine transition','high',code,m.start(),'A public state transition lacks an observed predecessor-state or authorization check, allowing callers to select a security-sensitive phase.',b,.82))
+            if not guarded:
+                fs += [self._finding('state_machine','Unrestricted state-machine transition','high',code,m.start(),'A public state transition lacks an observed predecessor-state or authorization check, allowing callers to select a security-sensitive phase.',b,.82),self._finding('business_logic','Business-logic state transition lacks a security invariant','high',code,m.start(),'A security-sensitive state transition is reachable without an observed invariant enforcing who may transition or from which predecessor state.',b,.78)]
         for m,n,a,h,b in funcs:
-            if not re.search(r'\b(?:getPrice|latestAnswer|latestRoundData|read|consult|spotPrice|twap)\s*\(',b,re.I): continue
-            value_use=bool(re.search(r'\b(?:price|answer)\b[^;\n]{0,160}[*/]|[*/][^;\n]{0,160}\b(?:price|answer)\b',b,re.I));validated=bool(re.search(r'\b(?:updated|answered|round|stale|heartbeat|twap|timeWeighted)\b',b,re.I) and re.search(r'\brequire\s*\([^;\n]{0,260}\b(?:answer|updated|round|answered|stale)\b',b,re.I))
+            oracle_call=re.search(r'\b(?:getPrice|latestAnswer|latestRoundData|read|consult|spotPrice|twap)\s*\(',b,re.I)
+            if not oracle_call: continue
+            assigned=re.search(r'\b(?:uint\w*\s+)?(\w+)\s*=\s*\w+\.(?:getPrice|latestAnswer|read|spotPrice|twap)\s*\(',b,re.I)
+            value_use=bool(re.search(r'\b(?:price|answer)\b[^;\n]{0,160}[*/]|[*/][^;\n]{0,160}\b(?:price|answer)\b',b,re.I) or (assigned and re.search(r'\b'+re.escape(assigned.group(1))+r'\b[^;\n]{0,180}[*/]',b,re.I)))
+            validated=bool(re.search(r'\b(?:updated|answered|round|stale|heartbeat|twap|timeWeighted)\b',b,re.I) and re.search(r'\brequire\s*\([^;\n]{0,260}\b(?:answer|updated|round|answered|stale)\b',b,re.I))
             if value_use and not validated: fs.append(self._finding('oracle_attack','Unchecked oracle input influences protocol value','critical',code,m.start(),'An externally sourced price influences a security-sensitive value calculation without an observed freshness, round-consistency, or sanity check.',b,.84))
         for m,n,a,h,b in funcs:
-            for dm in re.finditer(r'\b\w+\s*=\s*([^;\n]*?/[^;\n]+)',b):
-                expr=dm.group(1)
+            for dm in re.finditer(r'\b(\w+)\s*=\s*([^;\n]*?/[^;\n]+)',b):
+                expr=dm.group(2)
                 if '*' not in expr.split('/')[0] and re.search(r'\b(?:amount|value|units|shares|rate|price)\b',expr,re.I): fs.append(self._finding('precision','Potential truncation before value scaling','medium',code,m.start()+dm.start(),'A value is divided before an observed compensating multiplication, creating a potential precision-loss surface that needs boundary-value reproduction.',expr,.76));break
-            for tm in re.finditer(r'\b(?:transfer|send|call)\s*\([^;\n]*\b(?:payout|amount|units|shares)\b[^;\n]*\)',b,re.I):
-                expr=tm.group(0);ratio=re.search(r'\b(?:payout|amount|units|shares)\b\s*\*\s*(\d+)\s*/\s*(\d+)',expr,re.I)
-                if ratio and int(ratio.group(1))>int(ratio.group(2)): fs += [self._finding('asset_flow','Asset payout exceeds accounted unit','high',code,m.start(),'The transfer expression increases the requested unit by a fixed ratio while the caller balance is debited in the original unit.',b,.9),self._finding('accounting','Accounting conservation mismatch','high',code,m.start(),'Recorded units and transferred assets use different quantities on the withdrawal path.',b,.88)]
+            ratio_assign=re.search(r'\b(?:uint\w*\s+)?(payout|out|payment|amountOut)\s*=\s*\w+\s*\*\s*(\d+)\s*/\s*(\d+)\s*;',b,re.I)
+            if ratio_assign and int(ratio_assign.group(2))>int(ratio_assign.group(3)) and re.search(r'\b(?:transfer|send|call)\s*\([^;\n]*\b'+re.escape(ratio_assign.group(1))+r'\b',b,re.I):
+                fs += [self._finding('asset_flow','Asset payout exceeds accounted unit','high',code,m.start(),'The withdrawal path transfers a scaled-up payout while the caller balance is debited in the original unit.',b,.9),self._finding('accounting','Accounting conservation mismatch','high',code,m.start(),'Recorded units and transferred assets use different quantities on the withdrawal path.',b,.88)]
         for m in re.finditer(r'\bdelegatecall\s*\(',code,re.I):
             fn=None
             for fm,nn,aa,hh,bb in funcs:
                 if fm.start()<=m.start()<=fm.end()+len(bb): fn=(hh,bb);break
             governed=self._auth(*(fn or ('','')));target_caller=bool(fn and re.search(r'\b(?:msg\.sender|next|target|implementation)\b[^;\n]{0,120}(?:delegatecall|=)',fn[1],re.I))
             if not governed or target_caller:
-                fs.append(self._finding('delegatecall','Unsafe delegatecall / implementation trust boundary','high',code,m.start(),'A delegatecall creates an execution-context trust boundary and the reachable path is not visibly governed; local reproduction is required.',code[max(0,m.start()-260):m.end()+500],.8))
-                if re.search(r'\b(?:implementation|logic|impl)\b',code,re.I): fs.append(self._finding('upgradeability','Unprotected delegatecall-backed upgradeability','critical',code,m.start(),'Delegatecall is paired with an implementation boundary that is not visibly protected in the reachable path.',code[max(0,m.start()-350):m.end()+600],.86))
+                ev=code[max(0,m.start()-350):m.end()+650];fs.append(self._finding('delegatecall','Unsafe delegatecall / implementation trust boundary','high',code,m.start(),'A delegatecall creates an execution-context trust boundary and the reachable path is not visibly governed; local reproduction is required.',ev,.8));fs.append(self._finding('upgradeability','Unprotected delegatecall-backed upgradeability','critical',code,m.start(),'A delegatecall path is not visibly governed, so implementation control can cross the proxy boundary without an observed privileged check.',ev,.86))
         return fs
