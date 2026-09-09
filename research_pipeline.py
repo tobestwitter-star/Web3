@@ -67,15 +67,15 @@ class ResearchPipeline:
    h['independent_signals']=1;h['reproducibility']=0.0;h['economic_impact_score']=.65 if h['category'] in ('asset_flow','accounting','oracle','privilege') else .4;h['attacker_privilege']='user';h['economic_analysis']=self.economics.analyze(h)
   combined=correlated+hypotheses
   for f in combined:
-   f['attack_paths']=[p for p in attack_paths if p['sequence'][0]['contract']==str(f.get('contract',''))][:3] or attack_paths[:2] if attack_paths else []
+   f['attack_paths']=[p for p in attack_paths if p['sequence'][0]['contract']==str(f.get('contract',''))][:3] or (attack_paths[:2] if attack_paths else [])
   ranked=self.prioritizer.rank(combined,opportunity);candidate_validation=self.tools.generate_and_validate(source_dir,ranked[:10],True,180)
+  symbolic=self.tools.run_symbolic(source_dir,180);invariants=self.tools.run_invariants(source_dir,180);upgrade_surface=self.tools.upgrade_surface(source_dir)
   for c in candidate_validation.get('candidates',[]):
    for ex in c.get('execution',[]):
     if ex.get('status')=='executed':
      for f in ranked:
       if f.get('id')==c.get('finding_id'):
        f['execution_evidence']=ex.get('evidence') or {'returncode':ex.get('returncode'),'candidate_failed':ex.get('candidate_failed'),'stdout':ex.get('stdout','')[-12000:],'stderr':ex.get('stderr','')[-8000:]}
-       f['reproducibility']=float((ex.get('evidence') or {}).get('reproducibility_score',0.0))
-       f['status']='UNVERIFIED — HUMAN REVIEW REQUIRED'
+       f['reproducibility']=float((ex.get('evidence') or {}).get('reproducibility_score',0.0));f['status']='UNVERIFIED — HUMAN REVIEW REQUIRED'
   ranked=self.prioritizer.rank(ranked,opportunity)
-  return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'protocol_map':protocol_map,'attack_paths':attack_paths,'business_logic_hypotheses':hypotheses[:100],'tool_results':tr,'correlated_findings':ranked,'exploit_test_candidates':candidate_validation,'historical_search_leads':[self.history.search_urls(f.get('title',''),f.get('category','')) for f in ranked[:10]],'review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
+  return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'protocol_map':protocol_map,'attack_paths':attack_paths,'business_logic_hypotheses':hypotheses[:100],'tool_results':tr,'symbolic_validation':symbolic,'invariant_validation':invariants,'upgrade_surface':upgrade_surface,'correlated_findings':ranked,'exploit_test_candidates':candidate_validation,'historical_search_leads':[self.history.search_urls(f.get('title',''),f.get('category','')) for f in ranked[:10]],'review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
