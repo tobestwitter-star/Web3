@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "authorization": "isolated_local_holdout",
   "fixtures": [
     {"name":"VaultCallback","file":"VaultCallback.sol","expected":["reentrancy","callback","external_call"],"safe":false},
@@ -7,7 +7,8 @@
     {"name":"SignedClaim","file":"SignedClaim.sol","expected":["signature","replay"],"safe":false},
     {"name":"BootState","file":"BootState.sol","expected":["initialization","privilege","upgrade","state_machine","business_logic"],"safe":false},
     {"name":"PriceLedger","file":"PriceLedger.sol","expected":["oracle_attack","accounting"],"safe":false},
-    {"name":"RateVault","file":"RateVault.sol","expected":["precision","accounting","asset_flow"],"safe":false},
+    {"name":"RateVault","file":"RateVault.sol","expected":["accounting","asset_flow"],"safe":false},
+    {"name":"RoundingLoss","file":"RoundingLoss.sol","expected":["precision"],"safe":false},
     {"name":"ProxyBoundary","file":"ProxyBoundary.sol","expected":["delegatecall","upgradeability"],"safe":false},
     {"name":"CrossBoundary","file":"CrossBoundary.sol","expected":["reentrancy","callback","external_call"],"safe":false},
     {"name":"CallbackGuarded","file":"CallbackGuarded.sol","expected":[],"safe":true},
