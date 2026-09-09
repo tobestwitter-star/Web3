@@ -12,7 +12,7 @@ on:
 jobs:
   benchmark:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,6 +20,12 @@ jobs:
           python-version: '3.12'
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
+      - name: Install optional mature security analyzers
+        continue-on-error: true
+        run: |
+          python -m pip install slither-analyzer eth-wake
+          echo "slither=$(command -v slither || true)"
+          echo "wake=$(command -v wake || true)"
       - name: Compile project
         run: python -m compileall -q .
       - name: Run semantic analyzer regression tests
