@@ -34,43 +34,35 @@ class AdvancedWeb3Analyzer:
  def _has_auth(self,head,body):
   s=head+' '+body
   return bool(re.search(r'\b(?:onlyOwner|onlyRole|hasRole|_authorizeUpgrade|authorized|isOwner)\b',s,re.I) or re.search(r'\brequire\s*\([^;\n]{0,220}\b(?:msg\.sender|owner|admin|role)\b',s,re.I))
- def _state_write_after(self,body,pos):
-  return bool(re.search(r'\b(?:balance|balances|shares|debt|state|status|owner|admin|total[A-Za-z]*|allowance|credits)\w*\s*(?:=|\+=|-=|\*=)',body[pos:],re.I))
- def _sensitive_write(self,body):
-  return bool(re.search(r'\b(?:balance|balances|shares|debt|owner|admin|implementation|pendingOwner|allowance|credits|total[A-Za-z]*)\w*\s*(?:=|\+=|-=|\*=)',body,re.I))
+ def _write_pattern(self):
+  return r'\b(?:balance|balances|shares|debt|state|status|owner|admin|total[A-Za-z]*|allowance|credits)\w*(?:\s*\[[^\]]+\])?\s*(?:=|\+=|-=|\*=)'
+ def _state_write_after(self,body,pos):return bool(re.search(self._write_pattern(),body[pos:],re.I))
+ def _sensitive_write(self,body):return bool(re.search(self._write_pattern(),body,re.I))
  def _specialized(self,code):
   fs=[];funcs=self._functions(code)
-  # Signature authorization: cryptographic recovery + security-sensitive mutation + no freshness binding.
   for m,name,args,head,body in funcs:
    if not re.search(r'\becrecover\s*\(',body,re.I):continue
    action=bool(re.search(r'\b(?:claim|permit|execute|withdraw|mint|approve|transfer|setOwner|setAdmin)\w*\b',name,re.I)) or self._sensitive_write(body)
    freshness=bool(re.search(r'\b(?:nonce|used|usedHash|usedDigest|deadline|expiry|chainId|domainSeparator|DOMAIN_SEPARATOR|EIP712)\b',body,re.I))
    if action and not freshness:
     ev=body[:1800];fs += [self._finding('signature_replay','Replayable signature authorization path','high','signature',code,m.start(),'Signer recovery authorizes a security-sensitive state change, but no local nonce/consumed-digest/expiry/chain-domain binding is observed.',ev,'Potential unauthorized repeated execution; exact asset impact requires local reproduction.',.86),self._finding('replay','Missing signature replay protection','high','replay',code,m.start(),'A recovered-signature authorization appears reusable because freshness or one-time consumption is absent before the state mutation.',ev,'Potential repeated execution of an otherwise valid authorization.',.84)]
-  # Initializer takeover: an assignment to initialized is not itself a guard; require(!initialized) is.
   for m,name,args,head,body in funcs:
    if not re.fullmatch(r'(?:initialize|init|reinitialize)',name,re.I):continue
-   privileged=bool(re.search(r'\b(?:owner|admin|implementation|pendingOwner|upgrader)\b\s*=',body,re.I))
-   guard=bool(re.search(r'\b(?:initializer|reinitializer|onlyInitializing|_disableInitializers)\b',head+' '+body,re.I) or re.search(r'\brequire\s*\([^;\n]{0,120}!\s*initialized\b',body,re.I) or re.search(r'\b(?:initialized|initializedFlag)\s*(?:==|!=)\s*(?:false|0)\b',body,re.I))
+   privileged=bool(re.search(r'\b(?:owner|admin|implementation|pendingOwner|upgrader)\b\s*=',body,re.I));guard=bool(re.search(r'\b(?:initializer|reinitializer|onlyInitializing|_disableInitializers)\b',head+' '+body,re.I) or re.search(r'\brequire\s*\([^;\n]{0,120}!\s*initialized\b',body,re.I) or re.search(r'\b(?:initialized|initializedFlag)\s*(?:==|!=)\s*(?:false|0)\b',body,re.I))
    if privileged and not guard:
     ev=body[:1500];fs += [self._finding('initialization','Unprotected initializer / initialization takeover','critical','initialization',code,m.start(),'An externally reachable initializer assigns privileged control state without an observed one-time initialization guard.',ev,'An attacker may establish ownership/admin state before legitimate initialization.',.92),self._finding('init_privilege','Initialization privilege escalation','critical','privilege',code,m.start(),'A public initializer can establish owner/admin state without an observed authorization or one-time guard.',ev,'Potential takeover of privileged protocol operations.',.9)]
     if re.search(r'\b(?:upgrade|implementation|upgrader)\b',code,re.I):fs.append(self._finding('init_upgrade','Initialization exposes upgrade privilege boundary','high','upgrade',code,m.start(),'Initialization controls an upgrade-relevant privilege without an observed initialization guard.',ev,'Potential unauthorized upgrade/control if initialization is reachable.',.88))
-  # Reentrancy: only external boundaries followed by sensitive state writes; explicit CEI/mutex protection is safe.
   for m,name,args,head,body in funcs:
    if re.search(r'\bnonReentrant\b',head,re.I) or re.search(r'\block(?:ed)?\s*=\s*true\b',head+' '+body,re.I):continue
-   calls=list(re.finditer(r'\b\w+\s*\.\s*(?:call|send|transfer)\b',body,re.I))
-   for call in calls:
+   for call in re.finditer(r'\b\w+\s*\.\s*(?:call|send|transfer)\b',body,re.I):
     if self._state_write_after(body,call.end()):
-     ev=body[:1800];fs += [self._finding('reentrancy','Reentrancy: external callback precedes state update','critical','reentrancy',code,m.start(),'An external call occurs before a relevant state write and no obvious reentrancy mutex is present. This is an attack-path candidate, not confirmation.',ev,'Potential repeated or inconsistent state/value movement; local attacker callback reproduction is required.',.88),self._finding('callback','Unsafe callback flow before accounting/state mutation','high','callback',code,m.start(),'An external call precedes finalization of sensitive accounting/state and may permit callback-controlled reentry.',ev,'Potential cross-function or callback reentrancy; impact requires local reproduction.',.82),self._finding('external_call','Security-sensitive external call ordering','high','external_call',code,m.start(),'A cross-contract call precedes a relevant state mutation in the same callable path.',ev,'Potential callback-controlled state manipulation; validate locally.',.78)]
-     break
-  # Sensitive operations: include common value/privilege verbs such as mintCredit, but require a mutation/consequence.
+     ev=body[:1800];fs += [self._finding('reentrancy','Reentrancy: external callback precedes state update','critical','reentrancy',code,m.start(),'An external call occurs before a relevant state write and no obvious reentrancy mutex is present. This is an attack-path candidate, not confirmation.',ev,'Potential repeated or inconsistent state/value movement; local attacker callback reproduction is required.',.88),self._finding('callback','Unsafe callback flow before accounting/state mutation','high','callback',code,m.start(),'An external call precedes finalization of sensitive accounting/state and may permit callback-controlled reentry.',ev,'Potential cross-function or callback reentrancy; impact requires local reproduction.',.82),self._finding('external_call','Security-sensitive external call ordering','high','external_call',code,m.start(),'A cross-contract call precedes a relevant state mutation in the same callable path.',ev,'Potential callback-controlled state manipulation; validate locally.',.78)];break
   sensitive=r'^(?:upgrade|upgradeTo|upgradeToAndCall|mint\w*|burn\w*|pause|unpause|sweep|withdrawAll|transferOwnership|setOwner|setAdmin)$'
   for m,name,args,head,body in funcs:
    if not re.fullmatch(sensitive,name,re.I):continue
    if not (self._sensitive_write(body) or re.search(r'\b(?:transfer|call|delegatecall|selfdestruct)\b',body,re.I)):continue
    if self._has_auth(head,body):continue
    ev=body[:1600];fs += [self._finding('access_control','Sensitive operation lacks an observed authorization guard','high','access_control',code,m.start(),'A security-sensitive externally callable operation mutates privileged/value-bearing state without an observed owner, role, or authorization invariant.',ev,'Potential unauthorized privileged action; prove reachability and consequence locally.',.8),self._finding('privilege','Privilege escalation path','high','privilege',code,m.start(),'A caller appears able to reach a privileged mutation without a visible authorization guard.',ev,'Potential unauthorized control/value movement.',.78)]
-  # Receiver callbacks are explicit external calls. Require a sensitive accounting write after the callback.
   for m,name,args,head,body in funcs:
    cb=re.search(r'\bonTokenReceived\s*\(|\bonERC\w+\s*\(|\btokensReceived\s*\(',body,re.I)
    if cb and self._state_write_after(body,cb.end()):
@@ -83,7 +75,6 @@ class AdvancedWeb3Analyzer:
    for p in pats:
     m=re.search(p,code,re.I)
     if m:fs.append(self._finding(key,name,sev,cat,code,m.start(),'Source-level signal requiring an end-to-end attacker-path check.',code[max(0,m.start()-180):min(len(code),m.end()+500)],'Impact is not quantified until local reproduction establishes the security consequence.',.58))
-  # Accounting only when a concrete conservation mismatch is visible.
   for m in re.finditer(r'\b(?:withdraw|redeem|transfer)\w*\s*\([^)]*\)\s*[^\{]*\{(?P<body>.*?)\}',code,re.I|re.S):
    b=m.group('body');payout=re.search(r'\b(?:transfer|send)\s*\([^;]*\b(?:amount|shares)\b[^;]*\+\s*1\b',b,re.I)
    if payout:fs.append(self._finding('accounting','Accounting conservation mismatch','high','accounting',code,m.start(),'The withdrawal path reduces recorded accounting by one amount but transfers a larger amount, creating a concrete conservation mismatch.',b,'Potential protocol loss equal to the unexplained excess transfer, subject to available balance.',.9))
