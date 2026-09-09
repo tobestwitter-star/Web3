@@ -56,7 +56,6 @@ class AdvancedWeb3Analyzer:
    for call in re.finditer(r'\b\w+\s*\.\s*(?:call|send|transfer)\b',body,re.I):
     if self._state_write_after(body,call.end()):
      ev=body[:1800];fs += [self._finding('reentrancy','Reentrancy: external callback precedes state update','critical','reentrancy',code,m.start(),'An external call occurs before a relevant state write and no obvious reentrancy mutex is present. This is an attack-path candidate, not confirmation.',ev,'Potential repeated or inconsistent state/value movement; local attacker callback reproduction is required.',.88),self._finding('callback','Unsafe callback flow before accounting/state mutation','high','callback',code,m.start(),'An external call precedes finalization of sensitive accounting/state and may permit callback-controlled reentry.',ev,'Potential cross-function or callback reentrancy; impact requires local reproduction.',.82),self._finding('external_call','Security-sensitive external call ordering','high','external_call',code,m.start(),'A cross-contract call precedes a relevant state mutation in the same callable path.',ev,'Potential callback-controlled state manipulation; validate locally.',.78)];break
-  # Privilege checks focus on operations whose names imply protocol control, not every token mint/burn.
   sensitive=r'^(?:upgrade|upgradeTo|upgradeToAndCall|mintCredit|mintShares|mintTokens|burnFrom|pause|unpause|sweep|withdrawAll|transferOwnership|setOwner|setAdmin)$'
   for m,name,args,head,body in funcs:
    if not re.fullmatch(sensitive,name,re.I):continue
@@ -98,7 +97,28 @@ class AdvancedWeb3Analyzer:
  def _high(self,s,c):return int({'critical':50000,'high':10000,'medium':5000,'low':1000}.get(s,1000)*(.5+c))
  def fuzz_contract(self,contract_abi,contract_address):return []
  def analyze_economics(self,protocol_params):return []
+
 def generate_detailed_report(finding):
  if client is None:return f"# {finding.vulnerability_type}\n\n**Status:** {STATUS}\n\n## Severity\n{finding.severity.upper()}\n\n## Affected Location\n{finding.location}\n\n## Description\n{finding.description}\n\n## Evidence / PoC\n{finding.proof_of_concept}\n\n## Potential Impact\n{finding.economic_impact}\n\n## Confidence\n{finding.confidence*100:.0f}%\n\n## Human Verification\nReproduce in an explicitly authorized environment and confirm scope, impact, and duplicate status.\n\n## Remediation\nApply protocol-specific controls after confirming the root cause.\n\n## Submission Gate\nNever auto-submit; human approval is required."
  prompt=f"Create a professional Web3 security report for {finding.vulnerability_type}. Severity {finding.severity}; location {finding.location}; description {finding.description}; evidence {finding.proof_of_concept}; impact {finding.economic_impact}. Include executive summary, technical explanation, reproduction/PoC, impact, verification steps, remediation, and learning points. Clearly label {STATUS} and never suggest automatic submission."
  return client.messages.create(model=os.environ.get('ANTHROPIC_MODEL','claude-opus-4-1'),max_tokens=3000,messages=[{'role':'user','content':prompt}]).content[0].text
+
+# Generalization layer: keep the existing analyzer intact and add an independent semantic pass.
+try:
+ from semantic_dataflow import SemanticDataflow
+ _core_analyze_protocol=AdvancedWeb3Analyzer.analyze_protocol
+ def _analyze_with_semantics(self,code,protocol_name,network='ethereum'):
+  base=_core_analyze_protocol(self,code,protocol_name,network)
+  semantic=SemanticDataflow().analyze(code,protocol_name)
+  extra=[]
+  for i,f in enumerate(semantic):
+   sev=f.get('severity','medium');conf=float(f.get('confidence',.72) or .72)
+   extra.append(self._finding('semantic',f.get('title',f.get('category','semantic')),sev,f.get('category','semantic'),code,max(0,code.find(f.get('evidence',[''])[0][:30]) if f.get('evidence') else 0),f.get('description',''),(f.get('evidence') or [''])[0], 'Semantic candidate requires local reproduction.',conf))
+  merged={}
+  for f in base+extra:
+   k=(f.category,f.location,f.vulnerability_type)
+   if k not in merged or f.confidence>merged[k].confidence: merged[k]=f
+  self.findings=list(merged.values());return self.findings
+ AdvancedWeb3Analyzer.analyze_protocol=_analyze_with_semantics
+except Exception:
+ pass
