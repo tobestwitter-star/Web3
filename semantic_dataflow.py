@@ -52,17 +52,18 @@ class SemanticDataflow:
             init_guarded=bool(re.search(r'^(?:initialize|init|reinitialize|bootstrap|setup|configure|activate|boot)$',n,re.I) and self._init_guard(h,b));privileged_write=bool(re.search(r'\b(?:owner|admin|controller|governor|chief|implementation|logic|upgrader)\b\s*=',b,re.I));sensitive=bool(re.search(r'\b(?:upgrade|setOwner|setAdmin|promote|rotate|mintCredit|mintShares|mintTokens|burnFrom|sweep|withdrawAll)\w*\b',n,re.I))
             if (privileged_write or sensitive) and not init_guarded and not self._auth(h,b):
                 ev=b[:1700];fs += [self._finding('access_control','Sensitive privilege mutation lacks authorization','high',code,m.start(),'A privileged/value-bearing mutation is reachable without an observed authorization guard.',ev,.84),self._finding('privilege','Potential unauthorized privilege escalation','high',code,m.start(),'Caller control appears able to reach a privileged state mutation without an observed authorization invariant.',ev,.82)]
-                if re.search(r'\b(?:implementation|logic|upgrade|delegatecall)\b',b,re.I): fs.append(self._finding('upgradeability','Unprotected upgradeability boundary','critical',code,m.start(),'Upgrade-relevant state can be changed without an observed privileged boundary.',ev,.88))
+                if re.search(r'\b(?:implementation|logic|upgrade|delegatecall)\b',b,re.I): fs.append(self._finding('upgrade','Unprotected upgrade privilege boundary','critical',code,m.start(),'Upgrade-relevant state can be changed without an observed privileged boundary.',ev,.88))
         for m,n,a,h,b in funcs:
             if not re.search(r'\b(?:state|status|phase|mode)\w*\s*=',b,re.I): continue
             guarded=bool(re.search(r'\brequire\s*\([^;\n]{0,260}\b(?:state|status|phase|mode|msg\.sender|owner|governor|admin)\b',b,re.I) or self._auth(h,b))
             if not guarded:
-                fs += [self._finding('state_machine','Unrestricted state-machine transition','high',code,m.start(),'A public state transition lacks an observed predecessor-state or authorization check, allowing callers to select a security-sensitive phase.',b,.82),self._finding('business_logic','Business-logic state transition lacks a security invariant','high',code,m.start(),'A security-sensitive state transition is reachable without an observed invariant enforcing who may transition or from which predecessor state.',b,.78)]
+                pos=m.start()+max(0,b.find('state') if 'state' in b else b.find('phase'))
+                fs += [self._finding('state_machine','Unrestricted state-machine transition','high',code,m.start(),'A public state transition lacks an observed predecessor-state or authorization check, allowing callers to select a security-sensitive phase.',b,.82),self._finding('business_logic','Business-logic invariant failure','high',code,pos,'A business-logic invariant is missing from a security-sensitive state transition; the caller can move the protocol into a new phase without proving the required authorization or predecessor state.',b,.78)]
         for m,n,a,h,b in funcs:
             oracle_call=re.search(r'\b(?:getPrice|latestAnswer|latestRoundData|read|consult|spotPrice|twap)\s*\(',b,re.I)
             if not oracle_call: continue
             assigned=re.search(r'\b(?:uint\w*\s+)?(\w+)\s*=\s*\w+\.(?:getPrice|latestAnswer|read|spotPrice|twap)\s*\(',b,re.I)
-            value_use=bool(re.search(r'\b(?:price|answer)\b[^;\n]{0,160}[*/]|[*/][^;\n]{0,160}\b(?:price|answer)\b',b,re.I) or (assigned and re.search(r'\b'+re.escape(assigned.group(1))+r'\b[^;\n]{0,180}[*/]',b,re.I)))
+            value_use=bool(re.search(r'\b(?:price|answer)\b[^;\n]{0,160}[*/]|[*/][^;\n]{0,160}\b(?:price|answer)\b',b,re.I) or (assigned and re.search(r'\b'+re.escape(assigned.group(1))+r'\b[\s\S]{0,400}[*/]',b,re.I)))
             validated=bool(re.search(r'\b(?:updated|answered|round|stale|heartbeat|twap|timeWeighted)\b',b,re.I) and re.search(r'\brequire\s*\([^;\n]{0,260}\b(?:answer|updated|round|answered|stale)\b',b,re.I))
             if value_use and not validated: fs.append(self._finding('oracle_attack','Unchecked oracle input influences protocol value','critical',code,m.start(),'An externally sourced price influences a security-sensitive value calculation without an observed freshness, round-consistency, or sanity check.',b,.84))
         for m,n,a,h,b in funcs:
@@ -76,7 +77,7 @@ class SemanticDataflow:
             fn=None
             for fm,nn,aa,hh,bb in funcs:
                 if fm.start()<=m.start()<=fm.end()+len(bb): fn=(hh,bb);break
-            governed=self._auth(*(fn or ('','')));target_caller=bool(fn and re.search(r'\b(?:msg\.sender|next|target|implementation)\b[^;\n]{0,120}(?:delegatecall|=)',fn[1],re.I))
-            if not governed or target_caller:
+            governed=self._auth(*(fn or ('','')))
+            if not governed:
                 ev=code[max(0,m.start()-350):m.end()+650];fs.append(self._finding('delegatecall','Unsafe delegatecall / implementation trust boundary','high',code,m.start(),'A delegatecall creates an execution-context trust boundary and the reachable path is not visibly governed; local reproduction is required.',ev,.8));fs.append(self._finding('upgradeability','Unprotected delegatecall-backed upgradeability','critical',code,m.start(),'A delegatecall path is not visibly governed, so implementation control can cross the proxy boundary without an observed privileged check.',ev,.86))
         return fs
