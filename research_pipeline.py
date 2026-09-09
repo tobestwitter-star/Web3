@@ -34,11 +34,8 @@ class TargetAcquirer:
   try:p=subprocess.run(['git','clone','--depth','1',target.source_url,dest],capture_output=True,text=True,timeout=180);return {'ok':p.returncode==0,'path':dest if p.returncode==0 else None,'stdout':p.stdout[-4000:],'stderr':p.stderr[-6000:]}
   except (FileNotFoundError,subprocess.TimeoutExpired) as e:return {'ok':False,'error':str(e)}
 class FindingCorrelator:
- SEVERITY={'critical':4,'high':3,'medium':2,'low':1,'informational':0}
- STOP={'the','and','with','risk','potential','attack','vulnerability','issue','complex','broken','advanced','business','logic'}
- # Mature analyzers produce many code-quality observations that are useful to a researcher but are not
- # security findings by themselves. Keep them in tool_results; do not promote them into correlated findings.
- TOOL_OBSERVATION_ONLY={'solc-version','naming-convention','immutable-states','constable-states','timestamp','missing-zero-check','unused-return','uninitialized-state','low-level-calls'}
+ SEVERITY={'critical':4,'high':3,'medium':2,'low':1,'informational':0};STOP={'the','and','with','risk','potential','attack','vulnerability','issue','complex','broken','advanced','business','logic'}
+ TOOL_OBSERVATION_ONLY={'solc-version','naming-convention','immutable-states','constable-states','timestamp','missing-zero-check','unused-return','uninitialized-state','low-level-calls','locked-ether','reentrancy-no-eth'}
  def normalize(self,f,engine):
   text=' '.join(str(f.get(k,'')) for k in ('title','vulnerability','description','message','check'));loc=str(f.get('location') or f.get('path') or f.get('source') or '');sev=str(f.get('severity') or 'medium').lower();category=str(f.get('category') or '').lower();tokens=set(re.findall(r'[a-z0-9]{4,}',text.lower()))-self.STOP;raw=f.get('evidence',[]);evidence=raw if isinstance(raw,list) else [raw]
   return {'id':f.get('id') or hashlib.sha256((text+'|'+loc).encode()).hexdigest()[:16],'engine':engine,'title':f.get('title') or f.get('vulnerability') or f.get('check') or engine,'description':text[:4000],'location':loc,'severity':sev,'category':category,'confidence':float(f.get('confidence',.45) or .45),'evidence':evidence,'tokens':tokens,'fingerprint':hashlib.sha256((re.sub(r'\s+',' ',text.lower())+'|'+loc.lower()).encode()).hexdigest()}
@@ -74,7 +71,15 @@ class ResearchPipeline:
   build=self.build.detect(source_dir);protocol_map=self.mapper.map(source_dir);attack_paths=self.paths.paths(protocol_map);hypotheses=self.logic.hypotheses(source_dir,protocol_map);groups=[]
   if source_code:
    try:
-    fs=AdvancedWeb3Analyzer().analyze_protocol(source_code,protocol_name);groups.append({'engine':'existing_analyzer','findings':[{'id':f.id,'title':f.vulnerability_type,'severity':f.severity,'description':f.description,'location':f.location,'confidence':f.confidence,'evidence':[f.proof_of_concept],'category':f.category} for f in fs]})
+    fs=AdvancedWeb3Analyzer().analyze_protocol(source_code,protocol_name)
+    lines=source_code.splitlines()
+    def function_for_location(location):
+     mm=re.search(r'line\s+(\d+)',str(location or ''),re.I);line=int(mm.group(1)) if mm else 1;current=''
+     for idx,text in enumerate(lines[:max(1,line)],1):
+      fm=re.search(r'\bfunction\s+(\w+)\s*\(',text)
+      if fm:current=fm.group(1)
+     return current
+    groups.append({'engine':'existing_analyzer','findings':[{'id':f.id,'title':f.vulnerability_type,'severity':f.severity,'description':f.description,'location':f.location,'confidence':f.confidence,'evidence':[f.proof_of_concept],'category':f.category,'contract':protocol_name,'function':function_for_location(f.location)} for f in fs]})
    except Exception as e:groups.append({'engine':'existing_analyzer','findings':[],'error':str(e)})
   tr=self.tools.analyze(source_dir,tools or ['slither','aderyn','wake'],120)
   for r in tr.get('results',[]):groups.append({'engine':r.get('name','tool'),'findings':r.get('findings',[])})
