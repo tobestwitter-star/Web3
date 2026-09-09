@@ -39,6 +39,8 @@ class OpportunityStore:
     def _init(self):
         with self._connect() as db:
             db.execute("CREATE TABLE IF NOT EXISTS opportunities (id TEXT PRIMARY KEY, source TEXT, name TEXT, url TEXT, status TEXT, max_bounty_usd REAL, scope_size INTEGER, source_code_available INTEGER, competition_risk REAL, difficulty REAL, estimated_hours REAL, severity_potential REAL, likelihood REAL, attack_surface TEXT, scope_notes TEXT, discovered_at TEXT, score REAL, metadata TEXT)")
+            cols={r[1] for r in db.execute("PRAGMA table_info(opportunities)").fetchall()}
+            if 'metadata' not in cols: db.execute("ALTER TABLE opportunities ADD COLUMN metadata TEXT DEFAULT '{}'")
             db.execute("CREATE TABLE IF NOT EXISTS hunts (id TEXT PRIMARY KEY, opportunity_id TEXT, status TEXT, finding_count INTEGER, notes TEXT, updated_at TEXT)")
     def upsert(self,o):
         with self._connect() as db:
