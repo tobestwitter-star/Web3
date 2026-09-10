@@ -24,9 +24,11 @@ def _authorization(opportunity_id):
  op=_opportunity(opportunity_id)
  return op, AuthorizationPolicy.status(op,[]) if op else {'verified':False,'authorized_targets':[],'reason':'Opportunity not found.'}
 def _protected(opportunity_id):
+ if not str(opportunity_id or '').strip():
+  return None,jsonify({'error':'authorized_scope_verified cannot be asserted by the client; backend authorization has not been established for this opportunity.','authorization_required':True}),403
  op,status=_authorization(opportunity_id)
- if not op:return None,jsonify({'error':'Opportunity not found'}),404
- if not status.get('verified'):return None,jsonify({'error':'Backend authorization has not been established for this opportunity. Public scope evidence and client confirmation are insufficient.','authorization_required':True}),403
+ if not op:return None,jsonify({'error':'authorized_scope_verified cannot be asserted by the client; backend authorization has not been established for this opportunity.','authorization_required':True}),403
+ if not status.get('verified'):return None,jsonify({'error':'authorized_scope_verified cannot be asserted by the client; backend authorization has not been established for this opportunity. Public scope evidence and client confirmation are insufficient.','authorization_required':True}),403
  return op,None,None
 @app.get('/api/health')
 def health():return jsonify({'status':'Web3 BugHunter running','human_review_required':True,'auto_submission':False,'live_public_discovery':True,'continuous_queue':True})
