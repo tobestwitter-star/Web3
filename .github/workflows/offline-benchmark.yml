@@ -29,10 +29,10 @@ jobs:
           echo "wake=$(command -v wake || true)"
       - name: Compile project
         run: python -m compileall -q .
-      - name: Run semantic analyzer regression tests
+      - name: Run semantic, attribution, and pipeline regression tests
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
-        run: python -m pytest -q tests/test_advanced_analyzer.py
+        run: python -m pytest -q tests/test_advanced_analyzer.py tests/test_evidence_attribution.py tests/test_research_pipeline.py
       - name: Run known offline benchmark
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
