@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'scripts/real_target_smoke.py'
+      - 'scripts/real_target_smoke_0x.py'
       - 'bounty_engine.py'
       - 'research_pipeline.py'
       - 'advanced_web3_analyzer.py'
@@ -36,12 +37,34 @@ jobs:
         continue-on-error: true
         run: |
           python -m pip install slither-analyzer eth-wake
-      - name: Run real public bounty target smoke test
+      - name: Run ENS real public bounty target smoke test
         run: python scripts/real_target_smoke.py
-      - name: Upload real target result and professional report
+      - name: Upload ENS result and professional report
         uses: actions/upload-artifact@v4
         with:
           name: ens-real-target-result
           path: |
             real_target_result.json
             real_target_candidate_report.json
+
+  zero-x-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Web3 BugHunter dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Install optional local analyzers
+        continue-on-error: true
+        run: |
+          python -m pip install slither-analyzer eth-wake
+      - name: Run 0x Settler real public bounty target smoke test
+        run: python scripts/real_target_smoke_0x.py
+      - name: Upload 0x result
+        uses: actions/upload-artifact@v4
+        with:
+          name: 0x-real-target-result
+          path: real_target_0x_result.json
