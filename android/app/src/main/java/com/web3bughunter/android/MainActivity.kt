@@ -30,11 +30,12 @@ import org.json.JSONObject
 private val Context.settings by preferencesDataStore("settings")
 private val BASE = stringPreferencesKey("backend_url")
 private const val HUMAN_REVIEW = "UNVERIFIED — HUMAN REVIEW REQUIRED"
+private const val DEFAULT_BACKEND = ""
 
 class Api(private val context: Context) {
     private val client = OkHttpClient()
-    suspend fun base(): String = context.settings.data.first()[BASE] ?: ""
-    suspend fun saveBase(v: String) { context.settings.edit { it[BASE] = v.trim().trimEnd('/') } }
+    suspend fun base(): String = context.settings.data.first()[BASE] ?: DEFAULT_BACKEND
+    suspend fun saveBase(v: String) { val value=v.trim().trimEnd('/'); require(value.startsWith("https://")){"Backend URL must use HTTPS"}; context.settings.edit { it[BASE] = value } }
     suspend fun call(path: String, method: String = "GET", body: JSONObject? = null): JSONObject = withContext(Dispatchers.IO) {
         val base = base().ifBlank { throw IllegalStateException("Configure the HTTPS backend URL in Settings") }
         require(base.startsWith("https://")) { "Backend URL must use HTTPS" }
