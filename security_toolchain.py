@@ -47,7 +47,7 @@ class SecurityToolchain:
   if not shutil.which('forge'):return {'ok':False,'skipped':True,'error':'forge not installed'}
   return self._run(['forge','test','--json','-vvv'],source_dir,timeout)
  def run_symbolic(self,source_dir,timeout=180,functions=None):
-  if not shutil.which('halmos'):return {'tool':'halmos','status':'skipped','available':False,'error':'halmos not installed','findings':[],'evidence_level':'not_executed','review_status':STATUS}
+  if not shutil.which('halmos'):return {'tool':'halmos','status':'skipped','available':False,'error':'halmos not installed','findings':[],'evidence_level':'not_executed','confirmed_vulnerability':False,'review_status':STATUS}
   cmd=['halmos'];
   if functions:
    for fn in functions[:20]:cmd.extend(['--function',str(fn)])
