@@ -7,49 +7,72 @@ from research_pipeline import ResearchPipeline
 from research_queue import ResearchQueue
 from economic_analysis import EconomicAnalyzer
 from target_resolution import TargetMap
+from authorization import AuthorizationPolicy
 from database import PostgresOpportunityStore,PostgresResearchQueue,is_postgres
-app=Flask(__name__);store=(PostgresOpportunityStore() if is_postgres() else OpportunityStore(os.environ.get('BUGHUNTER_DB','bughunter.db')));discovery=PublicProgramDiscovery();toolchain=SecurityToolchain();research=ResearchPipeline();queue=(PostgresResearchQueue() if is_postgres() else ResearchQueue(os.environ.get('BUGHUNTER_DB','bughunter.db')));economics=EconomicAnalyzer()
-def fd(f):return {'id':f.id,'type':f.vulnerability_type,'severity':f.severity,'category':f.category,'location':f.location,'description':f.description,'poc':f.proof_of_concept,'impact':f.economic_impact,'confidence':f.confidence,'bounty_low':f.bounty_estimate_low,'bounty_high':f.bounty_estimate_high,'requires_verification':True,'status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
+app=Flask(__name__)
+store=PostgresOpportunityStore() if is_postgres() else OpportunityStore(os.environ.get('BUGHUNTER_DB','bughunter.db'))
+discovery=PublicProgramDiscovery();toolchain=SecurityToolchain();research=ResearchPipeline();queue=PostgresResearchQueue() if is_postgres() else ResearchQueue(os.environ.get('BUGHUNTER_DB','bughunter.db'));economics=EconomicAnalyzer()
+STATUS='UNVERIFIED — HUMAN REVIEW REQUIRED'
+def fd(f):return {'id':f.id,'type':f.vulnerability_type,'severity':f.severity,'category':f.category,'location':f.location,'description':f.description,'poc':f.proof_of_concept,'impact':f.economic_impact,'confidence':f.confidence,'bounty_low':f.bounty_estimate_low,'bounty_high':f.bounty_estimate_high,'requires_verification':True,'status':STATUS}
 def _refresh(sources=None):
  found,diagnostics=discovery.discover_public_indexes(sources)
  for o in found:store.upsert(o)
  return found,diagnostics
+def _opportunity(opportunity_id):
+ return next((o for o in store.list(200) if str(o.get('id'))==str(opportunity_id)),None)
+def _authorization(opportunity_id):
+ op=_opportunity(opportunity_id)
+ return op, AuthorizationPolicy.status(op,[]) if op else {'verified':False,'authorized_targets':[],'reason':'Opportunity not found.'}
+def _protected(opportunity_id):
+ op,status=_authorization(opportunity_id)
+ if not op:return None,jsonify({'error':'Opportunity not found'}),404
+ if not status.get('verified'):return None,jsonify({'error':'Backend authorization has not been established for this opportunity. Public scope evidence and client confirmation are insufficient.','authorization_required':True}),403
+ return op,None,None
 @app.get('/api/health')
 def health():return jsonify({'status':'Web3 BugHunter running','human_review_required':True,'auto_submission':False,'live_public_discovery':True,'continuous_queue':True})
 @app.get('/api/security-tools')
 def security_tools():return jsonify({'tools':toolchain.inventory(),'license_policy':'Use tools according to their licenses; no automatic installation.'})
 @app.post('/api/security-tools/analyze')
 def security_tools_analyze():
- d=request.get_json(silent=True) or {};src=d.get('source_dir')
+ d=request.get_json(silent=True) or {};src=d.get('source_dir');op,err,code=_protected(d.get('opportunity_id',''))
+ if err:return err,code
  if not src:return jsonify({'error':'source_dir is required'}),400
- if not d.get('authorized_scope_verified'):return jsonify({'error':'authorized_scope_verified must be true'}),403
  return jsonify(toolchain.analyze(src,d.get('tools'),int(d.get('timeout',120))))
 @app.post('/api/security-tools/fuzz')
 def security_tools_fuzz():
- d=request.get_json(silent=True) or {}
+ d=request.get_json(silent=True) or {};op,err,code=_protected(d.get('opportunity_id',''))
+ if err:return err,code
  if not d.get('source_dir'):return jsonify({'error':'source_dir is required'}),400
- if not d.get('authorized_scope_verified'):return jsonify({'error':'authorized_scope_verified must be true'}),403
  return jsonify(toolchain.fuzz(str(d['source_dir']),True,str(d.get('framework','auto')),int(d.get('timeout',180)),d.get('findings')))
 @app.post('/api/research/plan')
 def research_plan():
- d=request.get_json(silent=True) or {};return jsonify(research.plan(d.get('opportunity') or {},str(d.get('public_evidence',''))))
+ d=request.get_json(silent=True) or {};incoming=d.get('opportunity') or {};op=_opportunity(incoming.get('id'))
+ if not op:return jsonify({'error':'Opportunity not found'}),404
+ result=research.plan(op,str(d.get('public_evidence','')))
+ result['authorization']=AuthorizationPolicy.status(op,result.get('targets',[]))
+ result['active_testing_allowed']=bool(result['authorization'].get('verified'))
+ return jsonify(result)
 @app.post('/api/research/resolve')
 def research_resolve():
- d=request.get_json(silent=True) or {};op=d.get('opportunity') or {};e=str(d.get('public_evidence',''));scope=research.scope.resolve(op,e);build=research.build.detect(str(d.get('source_dir',''))) if d.get('source_dir') else {'primary':None,'detected':[],'not_run':True};return jsonify(TargetMap().build(scope,build))
+ d=request.get_json(silent=True) or {};op=_opportunity((d.get('opportunity') or {}).get('id')) or {};e=str(d.get('public_evidence',''));scope=research.scope.resolve(op,e);build=research.build.detect(str(d.get('source_dir',''))) if d.get('source_dir') else {'primary':None,'detected':[],'not_run':True};return jsonify(TargetMap().build(scope,build))
 @app.post('/api/research/acquire')
 def research_acquire():
- d=request.get_json(silent=True) or {};t=d.get('target') or {};authorized=bool(d.get('authorized_scope_verified'));from research_pipeline import Target
- target=Target(str(t.get('name','target')),str(t.get('source_url','')),str(t.get('kind','repository')),str(t.get('branch','')),authorized,str(t.get('scope_evidence','')),t.get('addresses',[]),t.get('contracts',[]),t.get('assets',[]));return jsonify(research.acquirer.clone_public_repo(target,str(d.get('workspace') or os.environ.get('RESEARCH_WORKSPACE','research-workspace')),authorized))
+ d=request.get_json(silent=True) or {};op,err,code=_protected(d.get('opportunity_id',''))
+ if err:return err,code
+ t=d.get('target') or {};from research_pipeline import Target
+ target=Target(str(op.get('name','target')),str(t.get('source_url','')),str(t.get('kind','repository')),str(t.get('branch','')),True,str(t.get('scope_evidence','')),t.get('addresses',[]),t.get('contracts',[]),t.get('assets',[]))
+ if target.kind=='evm_contract' or not target.source_url:return jsonify({'ok':False,'blocked':'unsupported_acquisition_type','reason':'EVM/on-chain targets are in scope records but repository acquisition is only supported for public GitHub repositories.'})
+ return jsonify(research.acquirer.clone_public_repo(target,str(d.get('workspace') or os.environ.get('RESEARCH_WORKSPACE','research-workspace')),True))
 @app.post('/api/research/analyze')
 def research_analyze():
- d=request.get_json(silent=True) or {}
- if not d.get('authorized_scope_verified'):return jsonify({'error':'authorized_scope_verified must be true'}),403
- return jsonify(research.analyze_local(str(d.get('source_dir','')),str(d.get('protocol_name','authorized-target')),d.get('source_code'),True,d.get('tools'),d.get('opportunity')))
+ d=request.get_json(silent=True) or {};op,err,code=_protected(d.get('opportunity_id',''))
+ if err:return err,code
+ return jsonify(research.analyze_local(str(d.get('source_dir','')),str(d.get('protocol_name','authorized-target')),d.get('source_code'),True,d.get('tools'),op))
 @app.post('/api/research/economic-analysis')
 def research_economic():
- d=request.get_json(silent=True) or {};f=d.get('finding') or {}
- if not d.get('authorized_scope_verified'):return jsonify({'error':'authorized_scope_verified must be true'}),403
- return jsonify(economics.analyze(f,str(d.get('context',''))))
+ d=request.get_json(silent=True) or {};op,err,code=_protected(d.get('opportunity_id',''))
+ if err:return err,code
+ return jsonify(economics.analyze(d.get('finding') or {},str(d.get('context',''))))
 @app.get('/api/research/history-leads')
 def research_history_leads():
  d=request.args;return jsonify({'search_leads':research.history.search_urls(d.get('title',''),d.get('category','')),'note':'Public-search leads only; similarity is not a duplicate determination.'})
@@ -64,14 +87,14 @@ def queue_next():
  item=queue.next();return jsonify({'status':'selected' if item else 'empty','item':item,'bounded':True,'human_review_required':True})
 @app.post('/api/research/queue/run-once')
 def queue_run_once():
- d=request.get_json(silent=True) or {}
- if not d.get('authorized_scope_verified'):return jsonify({'error':'authorized_scope_verified must be true'}),403
+ d=request.get_json(silent=True) or {};op,err,code=_protected(d.get('opportunity_id',''))
+ if err:return err,code
  item=queue.next()
  if not item:return jsonify({'status':'empty','human_review_required':True})
  try:
-  opportunity=item.get('metadata') or {};result=research.analyze_local(str(d.get('source_dir','')),str(d.get('protocol_name',opportunity.get('name','authorized-target'))),d.get('source_code'),True,d.get('tools'),opportunity);findings=result.get('correlated_findings',[]);queue.update(item['opportunity_id'],'report_ready' if findings else 'completed',len(findings),{'last_result':'analysis_complete','review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED'});return jsonify({'status':'completed_one_bounded_job','opportunity':opportunity,'result':result,'next_available':bool(queue.list(1)),'human_review_required':True})
+  result=research.analyze_local(str(d.get('source_dir','')),str(d.get('protocol_name',op.get('name','authorized-target'))),d.get('source_code'),True,d.get('tools'),op);findings=result.get('correlated_findings',[]);queue.update(item['opportunity_id'],'report_ready' if findings else 'completed',len(findings),{'last_result':'analysis_complete','review_status':STATUS});return jsonify({'status':'completed_one_bounded_job','opportunity':op,'result':result,'next_available':bool(queue.list(1)),'human_review_required':True})
  except Exception as exc:
-  queue.update(item['opportunity_id'],'failed',0,{'error':str(exc),'review_status':'UNVERIFIED — HUMAN REVIEW REQUIRED'});return jsonify({'status':'job_failed','opportunity':opportunity,'error':str(exc),'human_review_required':True}),500
+  queue.update(item['opportunity_id'],'failed',0,{'error':str(exc),'review_status':STATUS});return jsonify({'status':'job_failed','opportunity':op,'error':str(exc),'human_review_required':True}),500
 @app.post('/api/research/queue/<opportunity_id>')
 def queue_update(opportunity_id):
  d=request.get_json(silent=True) or {};queue.update(opportunity_id,str(d.get('status','queued')),int(d.get('finding_count',0)),d.get('metadata'));return jsonify({'status':'updated','queue':queue.list(200)})
@@ -101,7 +124,7 @@ def select_best():
  best=max(actionable,key=lambda o:float(o.get('score',0))*queue.learning_factor(o.get('attack_surface') or []));store.set_hunt_status(best['id'],'Investigating','Highest expected-value public opportunity after observed research-performance adjustment; scope must be human-verified before testing.');queue.enqueue(best['id'],float(best.get('score',0))*queue.learning_factor(best.get('attack_surface') or []),best);return jsonify({'status':'selected','opportunity':best,'discovered':len(found),'diagnostics':diagnostics,'human_review_required':True,'authorization_note':'Public discovery is not authorization.'})
 @app.post('/api/opportunities/<opportunity_id>/select')
 def select_opportunity(opportunity_id):
- match=next((o for o in store.list(200) if o['id']==opportunity_id),None)
+ match=_opportunity(opportunity_id)
  if not match:return jsonify({'error':'Opportunity not found'}),404
  if match.get('status')!='active' or int(match.get('scope_size',0))<=0:return jsonify({'error':'Opportunity is not actionable until an active in-scope target is established','authorization_required':True}),403
  store.set_hunt_status(opportunity_id,'Investigating','Selected by ranking; scope requires human verification.');queue.enqueue(opportunity_id,float(match.get('score',0))*queue.learning_factor(match.get('attack_surface') or []),match);return jsonify({'status':'selected','opportunity':match,'human_review_required':True,'authorization_note':'Selection does not establish authorization; acquisition and analysis remain gated.'})
@@ -114,10 +137,11 @@ def update_hunt(opportunity_id):
  store.set_hunt_status(opportunity_id,status,str(d.get('notes','')),int(d.get('finding_count',0)));return jsonify({'status':'updated','opportunity_id':opportunity_id,'hunt_status':status})
 @app.post('/api/analyze-advanced')
 def analyze_advanced():
- d=request.get_json(silent=True) or {};code=d.get('code');name=d.get('protocol_name')
- if not code or not name:return jsonify({'error':'Missing protocol_code or protocol_name'}),400
- if not d.get('authorized_scope_verified'):return jsonify({'error':'authorized_scope_verified must be true'}),403
- findings=AdvancedWeb3Analyzer().analyze_protocol(code,name);reports=[{'finding_id':f.id,'vulnerability':f.vulnerability_type,'severity':f.severity,'confidence':f.confidence,'estimated_bounty':{'low':f.bounty_estimate_low,'high':f.bounty_estimate_high},'detailed_report':generate_detailed_report(f),'requires_manual_verification':True,'status':'UNVERIFIED — HUMAN REVIEW REQUIRED','learning_value':f.learning_value} for f in findings];return jsonify({'status':'analysis_complete','protocol':name,'findings_count':len(findings),'findings':[fd(f) for f in findings],'detailed_reports':reports,'next_step':'Review, reproduce, and manually verify before submission.'})
+ d=request.get_json(silent=True) or {};op,err,code=_protected(d.get('opportunity_id',''))
+ if err:return err,code
+ code_text=d.get('code');name=d.get('protocol_name')
+ if not code_text or not name:return jsonify({'error':'Missing protocol_code or protocol_name'}),400
+ findings=AdvancedWeb3Analyzer().analyze_protocol(code_text,name);reports=[{'finding_id':f.id,'vulnerability':f.vulnerability_type,'severity':f.severity,'confidence':f.confidence,'estimated_bounty':{'low':f.bounty_estimate_low,'high':f.bounty_estimate_high},'detailed_report':generate_detailed_report(f),'requires_manual_verification':True,'status':STATUS,'learning_value':f.learning_value} for f in findings];return jsonify({'status':'analysis_complete','protocol':name,'findings_count':len(findings),'findings':[fd(f) for f in findings],'detailed_reports':reports,'next_step':'Review, reproduce, and manually verify before submission.'})
 @app.post('/api/generate-human-review-report')
 def generate_human_review_report():d=request.get_json(silent=True) or {};return jsonify({'status':'report_ready_for_human_review','report':build_report(d.get('findings',[]),d.get('opportunity',{}))})
 if __name__=='__main__':app.run(host='0.0.0.0',port=int(os.environ.get('PORT',8080)),debug=False)
