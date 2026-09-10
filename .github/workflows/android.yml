@@ -37,3 +37,4 @@ jobs:
           name: web3-bughunter-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
 # Push-triggered validation keeps Android builds reproducible without requiring manual dispatch.
+# Source fixes are validated through the same workflow as the Android client.
