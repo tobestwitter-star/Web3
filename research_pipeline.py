@@ -25,11 +25,9 @@ class TargetAcquirer:
  GIT_RE=re.compile(r'https?://(?:www\.)?github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?(?:/tree/[^\s#]+)?');ADDRESS_RE=re.compile(r'\b0x[a-fA-F0-9]{40}\b')
  def extract_targets(self,opportunity,public_text=''):
   scope=ScopeResolver().resolve(opportunity,public_text);targets=[]
-  for repo in scope['repositories']:
-   targets.append(Target(opportunity.get('name','target'),repo,authorized=False,scope_evidence=public_text,addresses=scope['contract_addresses'],assets=scope['assets']))
+  for repo in scope['repositories']: targets.append(Target(opportunity.get('name','target'),repo,authorized=False,scope_evidence=public_text,addresses=scope['contract_addresses'],assets=scope['assets']))
   if not targets:
-   for addr in scope['contract_addresses']:
-    targets.append(Target(opportunity.get('name','target'),'',kind='evm_contract',authorized=False,scope_evidence=public_text,addresses=[addr],assets=scope['assets']))
+   for addr in scope['contract_addresses']: targets.append(Target(opportunity.get('name','target'),'',kind='evm_contract',authorized=False,scope_evidence=public_text,addresses=[addr],assets=scope['assets']))
   return targets
  def clone_public_repo(self,target,workspace,authorization_confirmed=False):
   if not authorization_confirmed or not target.authorized:return {'ok':False,'blocked':'authorization_required','reason':'Explicit scope confirmation is required.'}
@@ -44,7 +42,7 @@ class FindingCorrelator:
  def normalize(self,f,engine):
   text=' '.join(str(f.get(k,'')) for k in ('title','vulnerability','description','message','check'));loc=str(f.get('location') or f.get('path') or f.get('source') or '');sev=str(f.get('severity') or 'medium').lower();category=str(f.get('category') or '').lower();tokens=set(re.findall(r'[a-z0-9]{4,}',text.lower()))-self.STOP;raw=f.get('evidence',[]);evidence=raw if isinstance(raw,list) else [raw]
   out={'id':f.get('id') or hashlib.sha256((text+'|'+loc).encode()).hexdigest()[:16],'engine':engine,'title':f.get('title') or f.get('vulnerability') or f.get('check') or engine,'description':text[:4000],'location':loc,'severity':sev,'category':category,'confidence':float(f.get('confidence',.45) or .45),'evidence':evidence,'tokens':tokens,'fingerprint':hashlib.sha256((re.sub(r'\s+',' ',text.lower())+'|'+loc.lower()).encode()).hexdigest()}
-  for k in ('file','contract','function','modifier','source_attribution','attribution_status','location_uncertain'):
+  for k in ('file','contract','function','modifier','source_attribution','attribution_status','location_uncertain'): 
    if k in f: out[k]=f[k]
   return out
  def _key(self,f):
@@ -66,9 +64,10 @@ class FindingCorrelator:
      if f['engine'] not in match['engines']:match['engines'].append(f['engine'])
      match['cross_tool_confidence']=min(1,max(match['cross_tool_confidence'],f['confidence'])+.12);match['evidence'].extend(f['evidence']);match['duplicate_classification']='related multi-engine finding'
      if self.SEVERITY.get(f['severity'],2)>self.SEVERITY.get(match['severity'],2):match['severity']=f['severity']
+  result=[]
   for f in merged:
-   f=triage_finding(f);f['validated_by_multiple_tools']=len(f['engines'])>=2;f['status']=STATUS;f['priority']=round(self.SEVERITY.get(f['severity'],2)*25+min(25,f['cross_tool_confidence']*25)+(10 if f['validated_by_multiple_tools'] else 0),2);f.pop('tokens',None)
-  return sorted(merged,key=lambda x:x['priority'],reverse=True)
+   f=triage_finding(f);f['validated_by_multiple_tools']=len(f['engines'])>=2;f['status']=STATUS;f['priority']=round(self.SEVERITY.get(f['severity'],2)*25+min(25,f['cross_tool_confidence']*25)+(10 if f['validated_by_multiple_tools'] else 0),2);f.pop('tokens',None);result.append(f)
+  return sorted(result,key=lambda x:x.get('priority',0),reverse=True)
 class ResearchPipeline:
  def __init__(self):self.acquirer=TargetAcquirer();self.tools=SecurityToolchain();self.correlator=FindingCorrelator();self.scope=ScopeResolver();self.build=BuildDetector();self.mapper=ProtocolMapper();self.paths=AttackPathEngine();self.logic=BusinessLogicEngine();self.prioritizer=FindingPrioritizer();self.history=HistoricalIntelligence();self.economics=EconomicAnalyzer()
  def plan(self,opportunity,public_evidence=''):
@@ -91,7 +90,10 @@ class ResearchPipeline:
    h['independent_signals']=1;h['reproducibility']=0.0;h['economic_impact_score']=.65 if h['category'] in ('asset_flow','accounting','oracle','privilege') else .4;h['attacker_privilege']='user';h['economic_analysis']=self.economics.analyze(h);h['status']=STATUS;h['kind']='exploratory_hypothesis'
   combined=[f for f in correlated if f.get('bounty_candidate',True)]
   for f in combined:
-   f['attack_paths']=[p for p in attack_paths if p.get('entry_point','')==f'{f.get("contract","")}.{f.get("function","")}' or p.get('entry_point','').split('.')[-1]==str(f.get('function',''))][:3] or (attack_paths[:2] if attack_paths else []);f['economic_analysis']=self.economics.analyze(f);f['status']=STATUS
+   exact=[p for p in attack_paths if p.get('entry_point','')==f'{f.get("contract","")}.{f.get("function","")}' or (f.get('function') and p.get('entry_point','').split('.')[-1]==str(f.get('function')))]
+   f['attack_paths']=exact[:3]
+   f['attack_path_uncertain']=not bool(exact)
+   f['economic_analysis']=self.economics.analyze(f);f['status']=STATUS
   ranked=self.prioritizer.rank(combined,opportunity);candidate_validation=self.tools.generate_and_validate(source_dir,ranked[:10],True,180);symbolic=self.tools.run_symbolic(source_dir,180);invariants=self.tools.run_invariants(source_dir,180);upgrade_surface=self.tools.upgrade_surface(source_dir)
   for c in candidate_validation.get('candidates',[]):
    for ex in c.get('execution',[]):
