@@ -5,6 +5,10 @@ on:
     paths:
       - 'android/**'
       - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
   workflow_dispatch:
 
 jobs:
@@ -36,5 +40,5 @@ jobs:
         with:
           name: web3-bughunter-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
-# Push-triggered validation keeps Android builds reproducible without requiring manual dispatch.
+# Push and pull-request validation keeps Android builds reproducible.
 # Source fixes are validated through the same workflow as the Android client.
