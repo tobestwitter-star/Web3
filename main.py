@@ -102,7 +102,8 @@ def select_best():
 def select_opportunity(opportunity_id):
  match=next((o for o in store.list(200) if o['id']==opportunity_id),None)
  if not match:return jsonify({'error':'Opportunity not found'}),404
- store.set_hunt_status(opportunity_id,'Investigating','Selected by ranking; scope requires human verification.');queue.enqueue(opportunity_id,float(match.get('score',0))*queue.learning_factor(match.get('attack_surface') or []),match);return jsonify({'status':'selected','opportunity':match,'human_review_required':True})
+ if match.get('status')!='active' or int(match.get('scope_size',0))<=0:return jsonify({'error':'Opportunity is not actionable until an active in-scope target is established','authorization_required':True}),403
+ store.set_hunt_status(opportunity_id,'Investigating','Selected by ranking; scope requires human verification.');queue.enqueue(opportunity_id,float(match.get('score',0))*queue.learning_factor(match.get('attack_surface') or []),match);return jsonify({'status':'selected','opportunity':match,'human_review_required':True,'authorization_note':'Selection does not establish authorization; acquisition and analysis remain gated.'})
 @app.get('/api/hunting-history')
 def hunting_history():return jsonify({'history':store.history()})
 @app.post('/api/hunting-history/<opportunity_id>')
@@ -114,6 +115,7 @@ def update_hunt(opportunity_id):
 def analyze_advanced():
  d=request.get_json(silent=True) or {};code=d.get('code');name=d.get('protocol_name')
  if not code or not name:return jsonify({'error':'Missing protocol_code or protocol_name'}),400
+ if not d.get('authorized_scope_verified'):return jsonify({'error':'authorized_scope_verified must be true'}),403
  findings=AdvancedWeb3Analyzer().analyze_protocol(code,name);reports=[{'finding_id':f.id,'vulnerability':f.vulnerability_type,'severity':f.severity,'confidence':f.confidence,'estimated_bounty':{'low':f.bounty_estimate_low,'high':f.bounty_estimate_high},'detailed_report':generate_detailed_report(f),'requires_manual_verification':True,'status':'UNVERIFIED — HUMAN REVIEW REQUIRED','learning_value':f.learning_value} for f in findings];return jsonify({'status':'analysis_complete','protocol':name,'findings_count':len(findings),'findings':[fd(f) for f in findings],'detailed_reports':reports,'next_step':'Review, reproduce, and manually verify before submission.'})
 @app.post('/api/generate-human-review-report')
 def generate_human_review_report():d=request.get_json(silent=True) or {};return jsonify({'status':'report_ready_for_human_review','report':build_report(d.get('findings',[]),d.get('opportunity',{}))})
