@@ -38,8 +38,10 @@ jobs:
           python -m pip install slither-analyzer eth-wake
       - name: Run real public bounty target smoke test
         run: python scripts/real_target_smoke.py
-      - name: Upload real target result
+      - name: Upload real target result and professional report
         uses: actions/upload-artifact@v4
         with:
           name: ens-real-target-result
-          path: real_target_result.json
+          path: |
+            real_target_result.json
+            real_target_candidate_report.json
