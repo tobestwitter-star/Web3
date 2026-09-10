@@ -26,7 +26,8 @@ class ResearchQueue:
    row=db.execute('SELECT * FROM research_queue WHERE status="queued" ORDER BY priority DESC,created_at ASC LIMIT 1').fetchone()
    if not row:return None
    db.execute('UPDATE research_queue SET status="researching",attempts=attempts+1,updated_at=? WHERE id=?',(datetime.now(timezone.utc).isoformat(),row[0]))
-  return self._row(row)
+   updated=db.execute('SELECT * FROM research_queue WHERE id=?',(row[0],)).fetchone()
+  return self._row(updated)
  def update(self,opportunity_id,status,findings=0,metadata=None):
   if status not in STATUSES:raise ValueError('invalid queue status')
   with self._db() as db:db.execute('UPDATE research_queue SET status=?,finding_count=?,metadata=COALESCE(?,metadata),updated_at=? WHERE opportunity_id=?',(status,int(findings),json.dumps(metadata) if metadata is not None else None,datetime.now(timezone.utc).isoformat(),opportunity_id))
