@@ -33,12 +33,16 @@ jobs:
         run: gradle wrapper --gradle-version 8.10.2
       - name: Unit tests
         run: ./gradlew test
-      - name: Debug APK
-        run: ./gradlew assembleDebug
+      - name: Release APK
+        run: ./gradlew assembleRelease
+      - name: Verify release APK
+        run: |
+          test -n "$(find app/build/outputs/apk/release -type f -name '*.apk' -print -quit)"
+          find app/build/outputs/apk/release -type f -name '*.apk' -print
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: web3-bughunter-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: web3-bughunter-release-apk
+          path: android/app/build/outputs/apk/release/*.apk
 # Push and pull-request validation keeps Android builds reproducible.
-# Source fixes are validated through the same workflow as the Android client.
+# Release artifacts are built from the canonical production backend configuration.
