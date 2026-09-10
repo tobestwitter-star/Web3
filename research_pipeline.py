@@ -24,8 +24,15 @@ class TargetAcquirer:
  GIT_RE=re.compile(r'https?://(?:www\.)?github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?(?:/tree/[^\s#]+)?');ADDRESS_RE=re.compile(r'\b0x[a-fA-F0-9]{40}\b')
  def extract_targets(self,opportunity,public_text=''):
   scope=ScopeResolver().resolve(opportunity,public_text);targets=[]
-  for repo in scope['repositories']:targets.append(Target(opportunity.get('name','target'),repo,authorized=False,scope_evidence=public_text,addresses=scope['contract_addresses'],assets=scope['assets']))
-  for addr in scope['contract_addresses']:targets.append(Target(opportunity.get('name','target'),'',kind='evm_contract',authorized=False,scope_evidence=public_text,addresses=[addr],assets=scope['assets']))
+  # A repository and the deployed addresses mentioned in its authorized scope are one
+  # research target record. Do not manufacture a second target merely because the
+  # same scope text contains an address. If no repository is published, addresses can
+  # still stand alone as EVM targets.
+  for repo in scope['repositories']:
+   targets.append(Target(opportunity.get('name','target'),repo,authorized=False,scope_evidence=public_text,addresses=scope['contract_addresses'],assets=scope['assets']))
+  if not targets:
+   for addr in scope['contract_addresses']:
+    targets.append(Target(opportunity.get('name','target'),'',kind='evm_contract',authorized=False,scope_evidence=public_text,addresses=[addr],assets=scope['assets']))
   return targets
  def clone_public_repo(self,target,workspace,authorization_confirmed=False):
   if not authorization_confirmed or not target.authorized:return {'ok':False,'blocked':'authorization_required','reason':'Explicit scope confirmation is required.'}
