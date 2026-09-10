@@ -10,6 +10,13 @@ def test_extract_public_github_target_and_address():
     assert targets[0].source_url=='https://github.com/example/protocol'
     assert targets[0].addresses==['0x1111111111111111111111111111111111111111']
 
+def test_extract_address_only_target_when_no_repository_is_published():
+    acq=TargetAcquirer()
+    targets=acq.extract_targets({'name':'Demo','metadata':{}},'authorized scope includes 0x2222222222222222222222222222222222222222')
+    assert len(targets)==1
+    assert targets[0].kind=='evm_contract'
+    assert targets[0].addresses==['0x2222222222222222222222222222222222222222']
+
 def test_acquisition_requires_authorization():
     with tempfile.TemporaryDirectory() as td:
         t=Target('demo','https://github.com/example/protocol',authorized=False)
