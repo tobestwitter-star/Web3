@@ -1,6 +1,21 @@
 name: Real target smoke test
 
 on:
+  push:
+    paths:
+      - 'scripts/real_target_smoke.py'
+      - 'bounty_engine.py'
+      - 'research_pipeline.py'
+      - 'advanced_web3_analyzer.py'
+      - 'security_toolchain.py'
+      - 'target_resolution.py'
+      - 'protocol_research.py'
+      - 'historical_intelligence.py'
+      - 'economic_analysis.py'
+      - 'exploit_harness.py'
+      - 'evidence_classifier.py'
+      - 'requirements.txt'
+      - '.github/workflows/real-target-smoke.yml'
   workflow_dispatch:
 
 jobs:
