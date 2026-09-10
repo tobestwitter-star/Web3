@@ -30,7 +30,7 @@ import org.json.JSONObject
 private val Context.settings by preferencesDataStore("settings")
 private val BASE = stringPreferencesKey("backend_url")
 private const val HUMAN_REVIEW = "UNVERIFIED — HUMAN REVIEW REQUIRED"
-private const val DEFAULT_BACKEND = ""
+private const val DEFAULT_BACKEND = "https://web3-bughunter.onrender.com"
 
 class Api(private val context: Context) {
     private val client = OkHttpClient()
