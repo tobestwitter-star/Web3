@@ -11,6 +11,7 @@ from target_resolution import ScopeResolver,BuildDetector,TargetMap
 from protocol_research import ProtocolMapper,BusinessLogicEngine,FindingPrioritizer,AttackPathEngine
 from historical_intelligence import HistoricalIntelligence
 from economic_analysis import EconomicAnalyzer
+from evidence_attribution import SourceAttributor
 STATUS='UNVERIFIED — HUMAN REVIEW REQUIRED'
 @dataclass
 class Target:
@@ -38,7 +39,10 @@ class FindingCorrelator:
  TOOL_OBSERVATION_ONLY={'solc-version','naming-convention','immutable-states','constable-states','timestamp','missing-zero-check','unused-return','uninitialized-state','low-level-calls','locked-ether','reentrancy-no-eth'}
  def normalize(self,f,engine):
   text=' '.join(str(f.get(k,'')) for k in ('title','vulnerability','description','message','check'));loc=str(f.get('location') or f.get('path') or f.get('source') or '');sev=str(f.get('severity') or 'medium').lower();category=str(f.get('category') or '').lower();tokens=set(re.findall(r'[a-z0-9]{4,}',text.lower()))-self.STOP;raw=f.get('evidence',[]);evidence=raw if isinstance(raw,list) else [raw]
-  return {'id':f.get('id') or hashlib.sha256((text+'|'+loc).encode()).hexdigest()[:16],'engine':engine,'title':f.get('title') or f.get('vulnerability') or f.get('check') or engine,'description':text[:4000],'location':loc,'severity':sev,'category':category,'confidence':float(f.get('confidence',.45) or .45),'evidence':evidence,'tokens':tokens,'fingerprint':hashlib.sha256((re.sub(r'\s+',' ',text.lower())+'|'+loc.lower()).encode()).hexdigest()}
+  out={'id':f.get('id') or hashlib.sha256((text+'|'+loc).encode()).hexdigest()[:16],'engine':engine,'title':f.get('title') or f.get('vulnerability') or f.get('check') or engine,'description':text[:4000],'location':loc,'severity':sev,'category':category,'confidence':float(f.get('confidence',.45) or .45),'evidence':evidence,'tokens':tokens,'fingerprint':hashlib.sha256((re.sub(r'\s+',' ',text.lower())+'|'+loc.lower()).encode()).hexdigest()}
+  for k in ('file','contract','function','modifier','source_attribution','attribution_status','location_uncertain'):
+   if k in f: out[k]=f[k]
+  return out
  def _key(self,f):
   loc=re.sub(r'[^a-z0-9]',' ',f.get('location','').lower());return (f.get('category') or '',set(re.findall(r'[a-z0-9]{4,}',loc)))
  def _same_issue(self,a,b):
@@ -71,14 +75,14 @@ class ResearchPipeline:
   build=self.build.detect(source_dir);protocol_map=self.mapper.map(source_dir);attack_paths=self.paths.paths(protocol_map);hypotheses=self.logic.hypotheses(source_dir,protocol_map);groups=[]
   if source_code:
    try:
-    fs=AdvancedWeb3Analyzer().analyze_protocol(source_code,protocol_name);lines=source_code.splitlines()
-    def function_for_location(location):
-     mm=re.search(r'line\s+(\d+)',str(location or ''),re.I);line=int(mm.group(1)) if mm else 1;lo=max(1,line-12);hi=min(len(lines),line+12);current=''
-     for text in lines[lo-1:hi]:
-      fm=re.search(r'\bfunction\s+(\w+)\s*\(',text)
-      if fm:current=fm.group(1)
-     return current
-    groups.append({'engine':'existing_analyzer','findings':[{'id':f.id,'title':f.vulnerability_type,'severity':f.severity,'description':f.description,'location':f.location,'confidence':f.confidence,'evidence':[f.proof_of_concept],'category':f.category,'contract':protocol_name,'function':function_for_location(f.location)} for f in fs]})
+    fs=AdvancedWeb3Analyzer().analyze_protocol(source_code,protocol_name)
+    attributed=[]
+    attributor=SourceAttributor(source_code)
+    for f in fs:
+     raw={'id':f.id,'title':f.vulnerability_type,'severity':f.severity,'description':f.description,'location':f.location,'confidence':f.confidence,'evidence':[f.proof_of_concept],'category':f.category}
+     # The analyzer's location is the detector anchor. Resolve it by containment, never by scanning a +/- window.
+     attributed.append(attributor.attribute(raw))
+    groups.append({'engine':'existing_analyzer','findings':attributed})
    except Exception as e:groups.append({'engine':'existing_analyzer','findings':[],'error':str(e)})
   tr=self.tools.analyze(source_dir,tools or ['slither','aderyn','wake'],120)
   for r in tr.get('results',[]):groups.append({'engine':r.get('name','tool'),'findings':r.get('findings',[])})
