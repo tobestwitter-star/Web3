@@ -12,6 +12,7 @@ from protocol_research import ProtocolMapper,BusinessLogicEngine,FindingPrioriti
 from historical_intelligence import HistoricalIntelligence
 from economic_analysis import EconomicAnalyzer
 from evidence_attribution import SourceAttributor
+from candidate_triage import triage_finding
 STATUS='UNVERIFIED — HUMAN REVIEW REQUIRED'
 @dataclass
 class Target:
@@ -24,10 +25,6 @@ class TargetAcquirer:
  GIT_RE=re.compile(r'https?://(?:www\.)?github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?(?:/tree/[^\s#]+)?');ADDRESS_RE=re.compile(r'\b0x[a-fA-F0-9]{40}\b')
  def extract_targets(self,opportunity,public_text=''):
   scope=ScopeResolver().resolve(opportunity,public_text);targets=[]
-  # A repository and the deployed addresses mentioned in its authorized scope are one
-  # research target record. Do not manufacture a second target merely because the
-  # same scope text contains an address. If no repository is published, addresses can
-  # still stand alone as EVM targets.
   for repo in scope['repositories']:
    targets.append(Target(opportunity.get('name','target'),repo,authorized=False,scope_evidence=public_text,addresses=scope['contract_addresses'],assets=scope['assets']))
   if not targets:
@@ -70,7 +67,7 @@ class FindingCorrelator:
      match['cross_tool_confidence']=min(1,max(match['cross_tool_confidence'],f['confidence'])+.12);match['evidence'].extend(f['evidence']);match['duplicate_classification']='related multi-engine finding'
      if self.SEVERITY.get(f['severity'],2)>self.SEVERITY.get(match['severity'],2):match['severity']=f['severity']
   for f in merged:
-   f['validated_by_multiple_tools']=len(f['engines'])>=2;f['status']=STATUS;f['priority']=round(self.SEVERITY.get(f['severity'],2)*25+min(25,f['cross_tool_confidence']*25)+(10 if f['validated_by_multiple_tools'] else 0),2);f.pop('tokens',None)
+   f=triage_finding(f);f['validated_by_multiple_tools']=len(f['engines'])>=2;f['status']=STATUS;f['priority']=round(self.SEVERITY.get(f['severity'],2)*25+min(25,f['cross_tool_confidence']*25)+(10 if f['validated_by_multiple_tools'] else 0),2);f.pop('tokens',None)
   return sorted(merged,key=lambda x:x['priority'],reverse=True)
 class ResearchPipeline:
  def __init__(self):self.acquirer=TargetAcquirer();self.tools=SecurityToolchain();self.correlator=FindingCorrelator();self.scope=ScopeResolver();self.build=BuildDetector();self.mapper=ProtocolMapper();self.paths=AttackPathEngine();self.logic=BusinessLogicEngine();self.prioritizer=FindingPrioritizer();self.history=HistoricalIntelligence();self.economics=EconomicAnalyzer()
@@ -82,13 +79,9 @@ class ResearchPipeline:
   build=self.build.detect(source_dir);protocol_map=self.mapper.map(source_dir);attack_paths=self.paths.paths(protocol_map);hypotheses=self.logic.hypotheses(source_dir,protocol_map);groups=[]
   if source_code:
    try:
-    fs=AdvancedWeb3Analyzer().analyze_protocol(source_code,protocol_name)
-    attributed=[]
-    attributor=SourceAttributor(source_code)
+    fs=AdvancedWeb3Analyzer().analyze_protocol(source_code,protocol_name);attributed=[];attributor=SourceAttributor(source_code)
     for f in fs:
-     raw={'id':f.id,'title':f.vulnerability_type,'severity':f.severity,'description':f.description,'location':f.location,'confidence':f.confidence,'evidence':[f.proof_of_concept],'category':f.category}
-     # The analyzer's location is the detector anchor. Resolve it by containment, never by scanning a +/- window.
-     attributed.append(attributor.attribute(raw))
+     raw={'id':f.id,'title':f.vulnerability_type,'severity':f.severity,'description':f.description,'location':f.location,'confidence':f.confidence,'evidence':[f.proof_of_concept],'category':f.category};attributed.append(attributor.attribute(raw))
     groups.append({'engine':'existing_analyzer','findings':attributed})
    except Exception as e:groups.append({'engine':'existing_analyzer','findings':[],'error':str(e)})
   tr=self.tools.analyze(source_dir,tools or ['slither','aderyn','wake'],120)
@@ -96,7 +89,7 @@ class ResearchPipeline:
   correlated=self.correlator.correlate(groups)
   for h in hypotheses:
    h['independent_signals']=1;h['reproducibility']=0.0;h['economic_impact_score']=.65 if h['category'] in ('asset_flow','accounting','oracle','privilege') else .4;h['attacker_privilege']='user';h['economic_analysis']=self.economics.analyze(h);h['status']=STATUS;h['kind']='exploratory_hypothesis'
-  combined=correlated
+  combined=[f for f in correlated if f.get('bounty_candidate',True)]
   for f in combined:
    f['attack_paths']=[p for p in attack_paths if p.get('entry_point','')==f'{f.get("contract","")}.{f.get("function","")}' or p.get('entry_point','').split('.')[-1]==str(f.get('function',''))][:3] or (attack_paths[:2] if attack_paths else []);f['economic_analysis']=self.economics.analyze(f);f['status']=STATUS
   ranked=self.prioritizer.rank(combined,opportunity);candidate_validation=self.tools.generate_and_validate(source_dir,ranked[:10],True,180);symbolic=self.tools.run_symbolic(source_dir,180);invariants=self.tools.run_invariants(source_dir,180);upgrade_surface=self.tools.upgrade_surface(source_dir)
