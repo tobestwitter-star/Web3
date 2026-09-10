@@ -71,7 +71,10 @@ class SourceAttributor:
         return None,None
     def attribute(self,finding):
         pos,eend=self.evidence_position(finding.get('location'),finding.get('evidence'),(r'\b\w+\s*\.\s*(?:call|send|transfer)\b',r'\b(?:delegatecall|ecrecover)\s*\(',r'\b(?:state|status|owner|admin|balance\w*|shares|debt|nonce)\w*\s*(?:=|\+=|-=)',))
-        ctx=self.context_at(pos,evidence_start=pos,evidence_end=eend) if pos is not None else SourceContext(None,None,None,None,None,None,None,'uncertain','No reliable source position was available.')
+        if pos is None:
+            ctx=SourceContext(None,None,None,None,None,None,None,'uncertain','No reliable source position was available.',None,None)
+        else:
+            ctx=self.context_at(pos,evidence_start=pos,evidence_end=eend)
         out=dict(finding); out['source_attribution']=ctx.to_dict(); out['attribution_status']=ctx.certainty; out['location_uncertain']=ctx.certainty=='uncertain'
         for k in ('file','contract','function','modifier'):
             v=getattr(ctx,k)
