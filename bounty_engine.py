@@ -1,6 +1,7 @@
 """Authorized public bounty discovery, opportunity scoring, persistence and review workflow."""
 from __future__ import annotations
 import html, json, re, sqlite3, urllib.parse, urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
@@ -83,10 +84,13 @@ class PublicProgramDiscovery:
         if not results:results=[self._make(f'feed:{source}',f'{source.title()} public program index',final,'feed_only',self._reward(self._clean(body)),0,True,'Index reachable but no actionable individual target extracted; not authorization.',{'platform_index':final},.8,.2)]
         return results,{'source':source,'url':final,'reachable':True,'bytes':len(body),'entries':len(results)}
     def discover_public_indexes(self,sources:Optional[Iterable[str]]=None):
+        selected=[source for source in list(sources or self.SOURCES) if source in self.SOURCES]
+        if not selected:return [],[]
+        with ThreadPoolExecutor(max_workers=len(selected)) as executor:
+            results=list(executor.map(lambda source:self.discover_platform(source,self.SOURCES[source]),selected))
         out=[];diagnostics=[]
-        for source in list(sources or self.SOURCES):
-            if source not in self.SOURCES:continue
-            found,diag=self.discover_platform(source,self.SOURCES[source]);out.extend(found);diagnostics.append(diag)
+        for found,diag in results:
+            out.extend(found);diagnostics.append(diag)
         return out,diagnostics
     def discover_from_json(self,payload,source='manual-import'):
         if source.startswith('immunefi'):return self._immunefi_json(payload,source)
