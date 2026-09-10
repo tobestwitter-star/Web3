@@ -2,7 +2,21 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id(
 
 android { namespace = "com.web3bughunter.android"; compileSdk = 35
     defaultConfig { applicationId = "com.web3bughunter.android"; minSdk = 26; targetSdk = 35; versionCode = 1; versionName = "1.0.0"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
-    buildTypes { release { isMinifyEnabled = true; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro") } }
+    signingConfigs {
+        create("release") {
+            val storeFilePath = System.getenv("ANDROID_SIGNING_STORE_FILE")
+            val storePassword = System.getenv("ANDROID_SIGNING_STORE_PASSWORD")
+            val keyAlias = System.getenv("ANDROID_SIGNING_KEY_ALIAS")
+            val keyPassword = System.getenv("ANDROID_SIGNING_KEY_PASSWORD")
+            if (!storeFilePath.isNullOrBlank() && !storePassword.isNullOrBlank() && !keyAlias.isNullOrBlank() && !keyPassword.isNullOrBlank()) {
+                storeFile = file(storeFilePath)
+                this.storePassword = storePassword
+                this.keyAlias = keyAlias
+                this.keyPassword = keyPassword
+            }
+        }
+    }
+    buildTypes { release { isMinifyEnabled = true; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"); signingConfig = signingConfigs.getByName("release") } }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
 }
