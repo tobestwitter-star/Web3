@@ -51,7 +51,7 @@ class SourceAttributor:
         return cur
     def context_at(self,pos,evidence_start=None,evidence_end=None):
         pos=max(0,min(len(self.code)-1,pos)) if self.code else 0; fn=self._span_at(self.functions,pos); mod=self._span_at(self.modifiers,pos); container=self._span_at(self.contracts,pos); chosen=fn or mod
-        return SourceContext(self._file_at(pos),container['name'] if container else None,fn['name'] if fn else None,mod['name'] if mod else None,fn.get('mutability') if fn else None,self._line(pos) if self.code else None,self._line(chosen['end']-1 if chosen else pos) if self.code else None,'exact' if chosen and container else ('function_exact' if chosen else 'uncertain'),'Evidence position is contained by the reported Solidity function/modifier and contract.' if chosen and container else ('Evidence is inside a function/modifier but no containing contract was established.' if chosen else 'No containing function/modifier span could be established; precision is explicitly uncertain.'),self._line(evidence_start) if evidence_start is not None else None,self._line(max(evidence_start,evidence_end-1)) if evidence_start is not None and evidence_end is not None else None)
+        return SourceContext(self._file_at(pos),container['name'] if container else None,fn['name'] if fn else None,mod['name'] if mod else None,fn.get('mutability') if fn else None,self._line(pos) if self.code else None,self._line(chosen['end']-1 if chosen else pos) if self.code else None,'exact' if chosen and container else ('function_exact' if chosen else 'uncertain'),'Evidence position is contained by the reported function/modifier and contract.' if chosen and container else ('Evidence is inside a function/modifier but no containing contract was established.' if chosen else 'No containing function/modifier span could be established; precision is explicitly uncertain.'),self._line(evidence_start) if evidence_start is not None else None,self._line(max(evidence_start,evidence_end-1)) if evidence_start is not None and evidence_end is not None else None)
     def evidence_position(self,location='',evidence=None,preferred_patterns=()):
         m=re.search(r'\bline\s+(\d+)',str(location or ''),re.I)
         if m:
@@ -71,7 +71,7 @@ class SourceAttributor:
         return None,None
     def attribute(self,finding):
         pos,eend=self.evidence_position(finding.get('location'),finding.get('evidence'),(r'\b\w+\s*\.\s*(?:call|send|transfer)\b',r'\b(?:delegatecall|ecrecover)\s*\(',r'\b(?:state|status|owner|admin|balance\w*|shares|debt|nonce)\w*\s*(?:=|\+=|-=)',))
-        ctx=self.context_at(pos,evidence_start=pos,evidence_end=eend) if pos is not None else SourceContext(None,None,None,None,None,None,None,None,'uncertain','No reliable source position was available.')
+        ctx=self.context_at(pos,evidence_start=pos,evidence_end=eend) if pos is not None else SourceContext(None,None,None,None,None,None,None,'uncertain','No reliable source position was available.')
         out=dict(finding); out['source_attribution']=ctx.to_dict(); out['attribution_status']=ctx.certainty; out['location_uncertain']=ctx.certainty=='uncertain'
         for k in ('file','contract','function','modifier'):
             v=getattr(ctx,k)
