@@ -8,6 +8,7 @@ class SourceContext:
     contract: str | None
     function: str | None
     modifier: str | None
+    mutability: str | None
     line: int | None
     line_end: int | None
     certainty: str
@@ -22,7 +23,7 @@ class SourceAttributor:
     """Map findings to the smallest source construct that actually contains the evidence."""
     FILE_RE = re.compile(r"^\s*//\s*FILE:\s*(.+?)\s*$", re.M)
     CONTRACT_RE = re.compile(r"\b(?:contract|abstract\s+contract|library|interface)\s+(\w+)\s*(?:is\s+[^\{]+)?\{", re.I)
-    FUNCTION_RE = re.compile(r"\bfunction\s+(\w+)\s*\([^)]*\)[^\{;]*\{", re.I)
+    FUNCTION_RE = re.compile(r"\bfunction\s+(\w+)\s*\([^)]*\)([^\{;]*)\{", re.I)
     MODIFIER_RE = re.compile(r"\bmodifier\s+(\w+)\s*\([^)]*\)[^\{;]*\{", re.I)
 
     def __init__(self, code: str):
@@ -43,7 +44,11 @@ class SourceAttributor:
     def _spans(self,regex,named=True):
         out=[]
         for m in regex.finditer(self.code):
-            out.append({'start':m.start(),'end':self._brace_end(m.end()-1),'name':m.group(1).strip() if named else m.group(1).strip()})
+            entry={'start':m.start(),'end':self._brace_end(m.end()-1),'name':m.group(1).strip() if named else m.group(1).strip()}
+            if regex is self.FUNCTION_RE:
+                tail=m.group(2).lower()
+                entry['mutability']='view' if re.search(r'\bview\b',tail) else ('pure' if re.search(r'\bpure\b',tail) else ('payable' if re.search(r'\bpayable\b',tail) else 'nonpayable'))
+            out.append(entry)
         return out
 
     def _line(self,pos): return self.code.count('\n',0,max(0,pos))+1
@@ -63,6 +68,7 @@ class SourceAttributor:
         return SourceContext(
             file=self._file_at(pos), contract=container['name'] if container else None,
             function=fn['name'] if fn else None, modifier=mod['name'] if mod else None,
+            mutability=fn.get('mutability') if fn else None,
             line=self._line(pos) if self.code else None,
             line_end=self._line((chosen['end']-1) if chosen else pos) if self.code else None,
             certainty='exact' if chosen and container else ('function_exact' if chosen else 'uncertain'),
@@ -71,7 +77,6 @@ class SourceAttributor:
             evidence_line_end=self._line(max(evidence_start,evidence_end-1)) if evidence_start is not None and evidence_end is not None else None)
 
     def evidence_position(self,location='',evidence=None,preferred_patterns=()):
-        # Prefer an explicit source line, but never infer a nearby declaration from a +/- window.
         m=re.search(r'\bline\s+(\d+)',str(location or ''),re.I)
         if m:
             line=int(m.group(1)); return sum(len(x)+1 for x in self.lines[:max(0,line-1)]),None
