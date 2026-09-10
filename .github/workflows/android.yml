@@ -31,18 +31,49 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
       - name: Generate wrapper
         run: gradle wrapper --gradle-version 8.10.2
+      - name: Generate ephemeral release signing keystore
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .ci-signing
+          STORE_PASSWORD="$(openssl rand -hex 32)"
+          KEY_PASSWORD="$(openssl rand -hex 32)"
+          keytool -genkeypair -v \
+            -keystore .ci-signing/release.keystore \
+            -storepass "$STORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
+            -alias web3-bughunter-release \
+            -keyalg RSA \
+            -keysize 4096 \
+            -validity 10000 \
+            -dname "CN=Web3 BugHunter, OU=Android, O=Web3 BugHunter, L=Online, ST=NA, C=NG" \
+            -noprompt
+          echo "ANDROID_SIGNING_STORE_FILE=$GITHUB_WORKSPACE/android/.ci-signing/release.keystore" >> "$GITHUB_ENV"
+          echo "ANDROID_SIGNING_STORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "ANDROID_SIGNING_KEY_ALIAS=web3-bughunter-release" >> "$GITHUB_ENV"
+          echo "ANDROID_SIGNING_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
       - name: Unit tests
         run: ./gradlew test
       - name: Release APK
         run: ./gradlew assembleRelease
-      - name: Verify release APK
+      - name: Verify signed release APK
+        shell: bash
         run: |
-          test -n "$(find app/build/outputs/apk/release -type f -name '*.apk' -print -quit)"
-          find app/build/outputs/apk/release -type f -name '*.apk' -print
-      - name: Upload APK
+          set -euo pipefail
+          APK="$(find app/build/outputs/apk/release -type f -name '*.apk' -print -quit)"
+          test -n "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+          test "$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK" | grep -c '^Signer #1 certificate DN:')" -eq 1
+          sha256sum "$APK"
+          stat -c 'size_bytes=%s' "$APK"
+          file "$APK"
+      - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: web3-bughunter-release-apk
+          name: web3-bughunter-signed-release-apk
           path: android/app/build/outputs/apk/release/*.apk
-# Push and pull-request validation keeps Android builds reproducible.
-# Release artifacts are built from the canonical production backend configuration.
+      - name: Clean signing material
+        if: always()
+        shell: bash
+        run: rm -rf .ci-signing
+# Release signing is ephemeral to the CI execution environment; no private key is committed or uploaded.
