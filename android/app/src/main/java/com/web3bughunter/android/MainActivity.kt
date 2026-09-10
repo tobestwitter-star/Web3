@@ -26,14 +26,21 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 private val Context.settings by preferencesDataStore("settings")
 private val BASE = stringPreferencesKey("backend_url")
 private const val HUMAN_REVIEW = "UNVERIFIED — HUMAN REVIEW REQUIRED"
 private const val DEFAULT_BACKEND = "https://web3-bughunter.onrender.com"
+const val API_CALL_TIMEOUT_SECONDS = 180L
 
 class Api(private val context: Context) {
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(API_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(API_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .build()
     suspend fun base(): String = context.settings.data.first()[BASE] ?: DEFAULT_BACKEND
     suspend fun saveBase(v: String) { val value=v.trim().trimEnd('/'); require(value.startsWith("https://")){"Backend URL must use HTTPS"}; context.settings.edit { it[BASE] = value } }
     suspend fun call(path: String, method: String = "GET", body: JSONObject? = null): JSONObject = withContext(Dispatchers.IO) {
