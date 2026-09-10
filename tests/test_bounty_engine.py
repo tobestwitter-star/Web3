@@ -1,4 +1,5 @@
 import tempfile
+import time
 from bounty_engine import Opportunity, OpportunityStore, PublicProgramDiscovery, build_report, score_opportunity
 
 def test_scoring_prefers_fast_high_value_targets():
@@ -31,3 +32,18 @@ def test_report_contains_submission_ready_structure_without_claiming_confirmatio
     assert {'root_cause','attack_scenario','poc_reproduction','evidence','impact','economic_impact','confidence','remediation','scope_evidence','possible_duplicate_indicators','status'} <= set(finding)
     assert finding['status']=='UNVERIFIED — HUMAN REVIEW REQUIRED'
     assert report['do_not_auto_submit'] is True
+
+def test_live_discovery_runs_platform_fetches_concurrently():
+    discovery=PublicProgramDiscovery()
+    selected=['a','b','c']
+    discovery.SOURCES={**discovery.SOURCES, **{source:f'https://example.com/{source}' for source in selected}}
+    calls=[]
+    def fake_platform(source,url,max_entries=100):
+        calls.append(source); time.sleep(0.15); return [], {'source':source,'reachable':True}
+    discovery.discover_platform=fake_platform
+    started=time.monotonic()
+    _, diagnostics=discovery.discover_public_indexes(selected)
+    elapsed=time.monotonic()-started
+    assert set(calls)==set(selected)
+    assert len(diagnostics)==len(selected)
+    assert elapsed < 0.35
