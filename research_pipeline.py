@@ -88,6 +88,7 @@ class ResearchPipeline:
   correlated=self.correlator.correlate(groups)
   for h in hypotheses:
    h['independent_signals']=1;h['reproducibility']=0.0;h['economic_impact_score']=.65 if h['category'] in ('asset_flow','accounting','oracle','privilege') else .4;h['attacker_privilege']='user';h['economic_analysis']=self.economics.analyze(h);h['status']=STATUS;h['kind']='exploratory_hypothesis'
+  triaged_findings=list(correlated)
   combined=[f for f in correlated if f.get('bounty_candidate',True)]
   for f in combined:
    exact=[p for p in attack_paths if p.get('entry_point','')==f'{f.get("contract","")}.{f.get("function","")}' or (f.get('function') and p.get('entry_point','').split('.')[-1]==str(f.get('function')))]
@@ -100,4 +101,4 @@ class ResearchPipeline:
       if f.get('id')==c.get('finding_id'):
        ev=ex.get('evidence') or {};f['execution_evidence']=ev or {'returncode':ex.get('returncode'),'candidate_failed':ex.get('candidate_failed'),'stdout':ex.get('stdout','')[-12000:],'stderr':ex.get('stderr','')[-8000:]};f['reproducibility']=float(ev.get('reproducibility_score',0.0));f['status']=STATUS
   ranked=self.prioritizer.rank(ranked,opportunity)
-  return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'protocol_map':protocol_map,'attack_paths':attack_paths,'business_logic_hypotheses':hypotheses[:100],'tool_results':tr,'symbolic_validation':symbolic,'invariant_validation':invariants,'upgrade_surface':upgrade_surface,'correlated_findings':ranked,'exploit_test_candidates':candidate_validation,'historical_search_leads':[self.history.search_urls(f.get('title',''),f.get('category','')) for f in ranked[:10]],'review_status':STATUS}
+  return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'protocol_map':protocol_map,'attack_paths':attack_paths,'business_logic_hypotheses':hypotheses[:100],'tool_results':tr,'symbolic_validation':symbolic,'invariant_validation':invariants,'upgrade_surface':upgrade_surface,'triaged_findings':triaged_findings,'correlated_findings':ranked,'exploit_test_candidates':candidate_validation,'historical_search_leads':[self.history.search_urls(f.get('title',''),f.get('category','')) for f in ranked[:10]],'review_status':STATUS}
