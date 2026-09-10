@@ -1,0 +1,30 @@
+name: Real target smoke test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ens-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+      - name: Install Web3 BugHunter dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Install optional local analyzers
+        continue-on-error: true
+        run: |
+          python -m pip install slither-analyzer eth-wake
+      - name: Run real public bounty target smoke test
+        run: python scripts/real_target_smoke.py
+      - name: Upload real target result
+        uses: actions/upload-artifact@v4
+        with:
+          name: ens-real-target-result
+          path: real_target_result.json
