@@ -36,12 +36,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .ci-signing
-          STORE_PASSWORD="$(openssl rand -hex 32)"
-          KEY_PASSWORD="$(openssl rand -hex 32)"
+          SIGNING_PASSWORD="$(openssl rand -hex 32)"
           keytool -genkeypair -v \
             -keystore .ci-signing/release.keystore \
-            -storepass "$STORE_PASSWORD" \
-            -keypass "$KEY_PASSWORD" \
+            -storepass "$SIGNING_PASSWORD" \
+            -keypass "$SIGNING_PASSWORD" \
             -alias web3-bughunter-release \
             -keyalg RSA \
             -keysize 4096 \
@@ -49,9 +48,9 @@ jobs:
             -dname "CN=Web3 BugHunter, OU=Android, O=Web3 BugHunter, L=Online, ST=NA, C=NG" \
             -noprompt
           echo "ANDROID_SIGNING_STORE_FILE=$GITHUB_WORKSPACE/android/.ci-signing/release.keystore" >> "$GITHUB_ENV"
-          echo "ANDROID_SIGNING_STORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "ANDROID_SIGNING_STORE_PASSWORD=$SIGNING_PASSWORD" >> "$GITHUB_ENV"
           echo "ANDROID_SIGNING_KEY_ALIAS=web3-bughunter-release" >> "$GITHUB_ENV"
-          echo "ANDROID_SIGNING_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+          echo "ANDROID_SIGNING_KEY_PASSWORD=$SIGNING_PASSWORD" >> "$GITHUB_ENV"
       - name: Unit tests
         run: ./gradlew test
       - name: Release APK
