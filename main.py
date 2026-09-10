@@ -7,7 +7,8 @@ from research_pipeline import ResearchPipeline
 from research_queue import ResearchQueue
 from economic_analysis import EconomicAnalyzer
 from target_resolution import TargetMap
-app=Flask(__name__);store=OpportunityStore(os.environ.get('BUGHUNTER_DB','bughunter.db'));discovery=PublicProgramDiscovery();toolchain=SecurityToolchain();research=ResearchPipeline();queue=ResearchQueue(os.environ.get('BUGHUNTER_DB','bughunter.db'));economics=EconomicAnalyzer()
+from database import PostgresOpportunityStore,PostgresResearchQueue,is_postgres
+app=Flask(__name__);store=(PostgresOpportunityStore() if is_postgres() else OpportunityStore(os.environ.get('BUGHUNTER_DB','bughunter.db')));discovery=PublicProgramDiscovery();toolchain=SecurityToolchain();research=ResearchPipeline();queue=(PostgresResearchQueue() if is_postgres() else ResearchQueue(os.environ.get('BUGHUNTER_DB','bughunter.db')));economics=EconomicAnalyzer()
 def fd(f):return {'id':f.id,'type':f.vulnerability_type,'severity':f.severity,'category':f.category,'location':f.location,'description':f.description,'poc':f.proof_of_concept,'impact':f.economic_impact,'confidence':f.confidence,'bounty_low':f.bounty_estimate_low,'bounty_high':f.bounty_estimate_high,'requires_verification':True,'status':'UNVERIFIED — HUMAN REVIEW REQUIRED'}
 def _refresh(sources=None):
  found,diagnostics=discovery.discover_public_indexes(sources)
