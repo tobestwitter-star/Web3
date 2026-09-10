@@ -20,6 +20,26 @@ def test_security_tool_analysis_requires_explicit_authorization():
     assert response.status_code == 403
 
 
+def test_protected_endpoint_with_unknown_opportunity_is_not_disclosed_as_404():
+    client = app.test_client()
+    response = client.post('/api/analyze-advanced', json={
+        'opportunity_id': 'definitely-not-a-real-opportunity',
+        'protocol_name': 'fixture',
+        'code': 'contract C {}',
+    })
+    assert response.status_code == 403
+    assert response.get_json()['authorization_required'] is True
+
+
+def test_security_tool_endpoint_with_unknown_opportunity_is_not_disclosed_as_404():
+    client = app.test_client()
+    response = client.post('/api/security-tools/analyze', json={
+        'opportunity_id': 'definitely-not-a-real-opportunity',
+        'source_dir': str(Path.cwd()),
+    })
+    assert response.status_code == 403
+
+
 def test_scope_resolution_marks_targets_authorization_required():
     scope = ScopeResolver().resolve(
         {'id': 'x', 'name': 'Fixture', 'source': 'test', 'url': 'https://example.invalid',
