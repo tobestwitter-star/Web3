@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "authorization": "isolated_local_holdout",
   "fixtures": [
     {"name":"VaultCallback","file":"VaultCallback.sol","expected":["reentrancy","callback","external_call"],"safe":false},
@@ -11,6 +11,12 @@
     {"name":"RoundingLoss","file":"RoundingLoss.sol","expected":["precision"],"safe":false},
     {"name":"ProxyBoundary","file":"ProxyBoundary.sol","expected":["delegatecall","upgradeability"],"safe":false},
     {"name":"CrossBoundary","file":"CrossBoundary.sol","expected":["reentrancy","callback","external_call"],"safe":false},
+    {"name":"CrossFunctionState","file":"CrossFunctionState.sol","expected":["state_machine"],"safe":false},
+    {"name":"StaleOracleDependency","file":"StaleOracleDependency.sol","expected":["oracle_attack"],"safe":false},
+    {"name":"RoundingInvariant","file":"RoundingInvariant.sol","expected":["precision"],"safe":false},
+    {"name":"ProxyInitSequence","file":"ProxyInitSequence.sol","expected":["initialization"],"safe":false},
+    {"name":"CallbackIntermediate","file":"CallbackIntermediate.sol","expected":["callback"],"safe":false},
+    {"name":"CapitalPrerequisite","file":"CapitalPrerequisite.sol","expected":["flash_loan"],"safe":false},
     {"name":"CallbackGuarded","file":"CallbackGuarded.sol","expected":[],"safe":true},
     {"name":"RoleInherited","file":"RoleInherited.sol","expected":[],"safe":true},
     {"name":"TypedPermitSafe","file":"TypedPermitSafe.sol","expected":[],"safe":true},
@@ -19,6 +25,13 @@
     {"name":"AccountingExact","file":"AccountingExact.sol","expected":[],"safe":true},
     {"name":"ProxyGoverned","file":"ProxyGoverned.sol","expected":[],"safe":true},
     {"name":"StateSafe","file":"StateSafe.sol","expected":[],"safe":true},
-    {"name":"PrecisionSafe","file":"PrecisionSafe.sol","expected":[],"safe":true}
+    {"name":"PrecisionSafe","file":"PrecisionSafe.sol","expected":[],"safe":true},
+    {"name":"CrossContractAuth","file":"CrossContractAuth.sol","expected":[],"safe":true},
+    {"name":"OracleFresh","file":"OracleFresh.sol","expected":[],"safe":true},
+    {"name":"RoundingExact","file":"RoundingExact.sol","expected":[],"safe":true},
+    {"name":"InitializedProxy","file":"InitializedProxy.sol","expected":[],"safe":true},
+    {"name":"UnreachableEconomicPath","file":"UnreachableEconomicPath.sol","expected":[],"safe":true},
+    {"name":"CallbackIntermediateSafe","file":"CallbackIntermediateSafe.sol","expected":[],"safe":true},
+    {"name":"CapitalSafe","file":"CapitalSafe.sol","expected":[],"safe":true}
   ]
 }
