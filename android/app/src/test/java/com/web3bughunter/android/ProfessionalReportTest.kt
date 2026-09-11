@@ -5,36 +5,39 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ProfessionalReportTest {
-    private fun completeReport(): JSONObject = JSONObject(
-        """
-        {
-          "report_version":"1.1",
-          "review_status":"UNVERIFIED — HUMAN REVIEW REQUIRED",
-          "do_not_auto_submit":true,
-          "human_review_only":true,
-          "scope_and_authorization":{"scope":"authorized scope","authorization":{"confirmed":true}},
-          "limitations":["Missing evidence is not inferred or fabricated."],
-          "findings":[{
-            "finding_id":"f-1",
-            "title":"Reentrancy",
-            "severity":"high",
-            "confidence":0.91,
-            "review_status":"UNVERIFIED — HUMAN REVIEW REQUIRED",
-            "duplicate_status":"POSSIBLE DUPLICATE — HUMAN REVIEW REQUIRED",
-            "engine_evidence":[{"engine":"slither","raw_evidence":["structured slither evidence"]},{"engine":"forge","raw_evidence":["structured forge evidence"]}],
-            "engine_provenance":[{"engine":"forge","version":"1.0","command":"forge test"}],
-            "execution_metadata":[{"status":"executed","returncode":0,"command":"forge test"}],
-            "reproduction":{"status":"demonstrated","evidence":{"trace":"call trace","inputs":{"amount":1}}},
-            "traces_inputs_coverage_symbolic":{"trace":"call trace","inputs":{"amount":1},"coverage":{"lines":42},"symbolic":{"status":"executed"},"invariants":{"status":"executed"}},
-            "evidence_provenance":[{"engine":"forge","sha256":"abc"}],
-            "historical_context":[{"match_type":"semantic_similarity_lead","similarity":0.84}],
-            "economic_impact":{"estimated_loss_usd":125000},
-            "remediation":"Update state before external interaction.",
-            "limitations":["Requires independent human reproduction."]
-          }]
-        }
-        """.trimIndent()
-    )
+    private fun completeReport(): JSONObject {
+        val engineEvidence = listOf(
+            mapOf("engine" to "slither", "raw_evidence" to listOf("structured slither evidence")),
+            mapOf("engine" to "forge", "raw_evidence" to listOf("structured forge evidence"))
+        )
+        val finding = mapOf(
+            "finding_id" to "f-1",
+            "title" to "Reentrancy",
+            "severity" to "high",
+            "confidence" to 0.91,
+            "review_status" to REPORT_REVIEW_STATUS,
+            "duplicate_status" to REPORT_DUPLICATE_STATUS,
+            "engine_evidence" to engineEvidence,
+            "engine_provenance" to listOf(mapOf("engine" to "forge", "version" to "1.0", "command" to "forge test")),
+            "execution_metadata" to listOf(mapOf("status" to "executed", "returncode" to 0, "command" to "forge test")),
+            "reproduction" to mapOf("status" to "demonstrated", "evidence" to mapOf("trace" to "call trace", "inputs" to mapOf("amount" to 1))),
+            "traces_inputs_coverage_symbolic" to mapOf("trace" to "call trace", "inputs" to mapOf("amount" to 1), "coverage" to mapOf("lines" to 42), "symbolic" to mapOf("status" to "executed"), "invariants" to mapOf("status" to "executed")),
+            "evidence_provenance" to listOf(mapOf("engine" to "forge", "sha256" to "abc")),
+            "historical_context" to listOf(mapOf("match_type" to "semantic_similarity_lead", "similarity" to 0.84)),
+            "economic_impact" to mapOf("estimated_loss_usd" to 125000),
+            "remediation" to "Update state before external interaction.",
+            "limitations" to listOf("Requires independent human reproduction.")
+        )
+        return JSONObject(mapOf(
+            "report_version" to "1.1",
+            "review_status" to REPORT_REVIEW_STATUS,
+            "do_not_auto_submit" to true,
+            "human_review_only" to true,
+            "scope_and_authorization" to mapOf("scope" to "authorized scope", "authorization" to mapOf("confirmed" to true)),
+            "limitations" to listOf("Missing evidence is not inferred or fabricated."),
+            "findings" to listOf(finding)
+        ))
+    }
 
     @Test fun completeStructuredReportPreservesAuthoritativeFields() {
         val report = completeReport().toProfessionalReport()
@@ -52,20 +55,28 @@ class ProfessionalReportTest {
     }
 
     @Test fun unknownFieldsAndPartialReportsRemainForwardCompatible() {
-        val report = JSONObject("""{"review_status":"UNVERIFIED — HUMAN REVIEW REQUIRED","future_field":{"value":true},"findings":[{"finding_id":"f-2","severity":"medium","unknown_engine_field":"preserve raw JSON"}]}""").toProfessionalReport()
+        val report = JSONObject(mapOf(
+            "review_status" to REPORT_REVIEW_STATUS,
+            "future_field" to mapOf("value" to true),
+            "findings" to listOf(mapOf("finding_id" to "f-2", "severity" to "medium", "unknown_engine_field" to "preserve raw JSON"))
+        )).toProfessionalReport()
         assertEquals(REPORT_REVIEW_STATUS, report.reviewStatus)
         assertEquals("preserve raw JSON", report.finding(0)!!.getString("unknown_engine_field"))
         assertFalse(report.hasDemonstratedEvidence(report.finding(0)!!))
     }
 
     @Test fun missingEvidenceIsDistinctFromDemonstratedEvidence() {
-        val report = JSONObject("""{"findings":[{"finding_id":"f-3","reproduction":{"status":"not demonstrated","evidence":null}}]}""").toProfessionalReport()
+        val report = JSONObject(mapOf(
+            "findings" to listOf(mapOf("finding_id" to "f-3", "reproduction" to mapOf("status" to "not demonstrated")))
+        )).toProfessionalReport()
         assertFalse(report.hasDemonstratedEvidence(report.finding(0)!!))
         assertEquals("not demonstrated", report.finding(0)!!.getJSONObject("reproduction").getString("status"))
     }
 
     @Test fun malformedEvidenceDoesNotBecomeAnExecutionClaim() {
-        val report = JSONObject("""{"findings":[{"finding_id":"f-4","reproduction":"malformed"}]}""").toProfessionalReport()
+        val report = JSONObject(mapOf(
+            "findings" to listOf(mapOf("finding_id" to "f-4", "reproduction" to "malformed"))
+        )).toProfessionalReport()
         assertFalse(report.hasDemonstratedEvidence(report.finding(0)!!))
         assertEquals("malformed", report.finding(0)!!.getString("reproduction"))
     }
