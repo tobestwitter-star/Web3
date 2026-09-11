@@ -20,22 +20,21 @@ jobs:
           python-version: '3.12'
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
-      - name: Install Foundry for executable local fixtures
+      - name: Bootstrap mature engines using the production installation path
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL https://foundry.paradigm.xyz | bash
-          export PATH="$HOME/.config/.foundry/bin:$PATH"
-          foundryup
+          bash render_build.sh
+          echo "$PWD/.render-foundry/bin" >> "$GITHUB_PATH"
+          echo "$PWD/.render-tools/bin" >> "$GITHUB_PATH"
+          echo "$PWD/.render-ityfuzz/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.ityfuzz/bin" >> "$GITHUB_PATH"
+          export PATH="$PWD/.render-foundry/bin:$PWD/.render-tools/bin:$PWD/.render-ityfuzz/bin:$HOME/.local/bin:$HOME/.ityfuzz/bin:$PATH"
           forge --version
-          echo "$HOME/.config/.foundry/bin" >> "$GITHUB_PATH"
-      - name: Install optional mature security analyzers
-        continue-on-error: true
-        run: |
-          python -m pip install slither-analyzer eth-wake
-          python -m pip install setuptools "pytest>=8,<9"
-          echo "slither=$(command -v slither || true)"
-          echo "wake=$(command -v wake || true)"
+          slither --version
+          halmos --version
+          ityfuzz --version
       - name: Compile project
         run: python -m compileall -q .
       - name: Run semantic, attribution, historical pipeline, candidate-triage, and protocol-validation regression tests
