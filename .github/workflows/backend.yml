@@ -54,7 +54,15 @@ jobs:
           set -euo pipefail
           curl -fsSL -o "$RUNNER_TEMP/ityfuzz-installer.sh" https://ity.fuzz.land/
           bash "$RUNNER_TEMP/ityfuzz-installer.sh"
-          bash -lc 'ityfuzzup'
+          export PATH="$HOME/.ityfuzz/bin:$HOME/.local/bin:$PATH"
+          if command -v ityfuzzup >/dev/null 2>&1; then
+            ityfuzzup
+          elif [ -x "$HOME/.ityfuzz/bin/ityfuzzup" ]; then
+            "$HOME/.ityfuzz/bin/ityfuzzup"
+          else
+            echo "ityfuzzup was not installed by the official installer" >&2
+            exit 1
+          fi
           found="$(find "$HOME" "$RUNNER_TEMP" -type f -name ityfuzz -perm -u+x 2>/dev/null | head -n 1 || true)"
           if [ -z "$found" ]; then
             echo "ItyFuzz installation failed" >&2
