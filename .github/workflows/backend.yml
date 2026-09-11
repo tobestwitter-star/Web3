@@ -40,6 +40,7 @@ jobs:
         run: |
           slither --version
           forge --version
+          halmos --version
       - name: Compile Python sources
         run: python -m compileall -q .
       - name: Run tests
