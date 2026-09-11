@@ -48,6 +48,27 @@ jobs:
           done
           forge --version
           echo "$HOME/.config/.foundry/bin" >> "$GITHUB_PATH"
+      - name: Install ItyFuzz
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ITYFUZZ_DIR="$RUNNER_TEMP/ityfuzz/bin"
+          mkdir -p "$ITYFUZZ_DIR"
+          curl -fsSL -o "$RUNNER_TEMP/ityfuzz-installer.sh" https://ity.fuzz.land/
+          bash "$RUNNER_TEMP/ityfuzz-installer.sh"
+          if command -v ityfuzzup >/dev/null 2>&1; then
+            ityfuzzup
+          elif [ -x "$HOME/.ityfuzz/bin/ityfuzzup" ]; then
+            "$HOME/.ityfuzz/bin/ityfuzzup"
+          fi
+          found="$(find "$HOME" "$RUNNER_TEMP" -type f -name ityfuzz -perm -u+x 2>/dev/null | head -n 1 || true)"
+          if [ -z "$found" ]; then
+            echo "ItyFuzz installation failed" >&2
+            exit 1
+          fi
+          install -m 0755 "$found" "$ITYFUZZ_DIR/ityfuzz"
+          echo "$ITYFUZZ_DIR" >> "$GITHUB_PATH"
+          "$ITYFUZZ_DIR/ityfuzz" --version
       - name: Install OSV-Scanner and Gitleaks
         shell: bash
         run: |
@@ -71,6 +92,7 @@ jobs:
           slither --version
           forge --version
           halmos --version
+          ityfuzz --version
           osv-scanner --version
           gitleaks version
       - name: Compile Python sources
