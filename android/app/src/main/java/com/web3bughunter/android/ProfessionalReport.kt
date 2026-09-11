@@ -19,16 +19,15 @@ data class ProfessionalReport(val raw: JSONObject) {
     fun findingStatus(finding: JSONObject): String =
         finding.optString("review_status").ifBlank { reviewStatus }
 
-    fun duplicateStatus(finding: JSONObject): String =
-        finding.optString("duplicate_status")
+    fun duplicateStatus(finding: JSONObject): String = finding.optString("duplicate_status")
 
     fun hasDemonstratedEvidence(finding: JSONObject): Boolean {
-        val evidence = finding.optJSONArray("engine_evidence")
+        val engineEvidence = finding.optJSONArray("engine_evidence")
         val reproduction = finding.optJSONObject("reproduction")
         val execution = finding.optJSONArray("execution_metadata")
-        return (evidence != null && evidence.length() > 0) ||
-            (reproduction != null && reproduction.length() > 0) ||
-            (execution != null && execution.length() > 0)
+        val reproductionDemonstrated = reproduction?.optString("status")?.equals("demonstrated", ignoreCase = true) == true
+        val executionDemonstrated = (0 until (execution?.length() ?: 0)).any { execution.optJSONObject(it)?.optString("status")?.equals("executed", ignoreCase = true) == true }
+        return (engineEvidence != null && engineEvidence.length() > 0) || reproductionDemonstrated || executionDemonstrated
     }
 }
 
