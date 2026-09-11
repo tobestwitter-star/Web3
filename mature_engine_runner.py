@@ -50,7 +50,7 @@ class MatureEngineRunner:
     m=e.get("source_mapping") or {};f=m.get("filename_relative") or m.get("filename_absolute");lines=m.get("lines") or []
     if f:locs.append({"file":f,"lines":lines,"name":e.get("name"),"type":e.get("type")})
    impact=str(d.get("impact") or "informational").lower();conf=str(d.get("confidence") or "medium").lower();first=locs[0] if locs else {};line=(first.get("lines") or [None])[0]
-   findings.append({"id":d.get("id") or d.get("check"),"check":d.get("check"),"title":d.get("check") or "Slither detector","description":d.get("description") or "","severity":impact,"confidence":{"high":.9,"medium":.7,"low":.45}.get(conf,.55),"locations":locs,"file":first.get("file"),"line":line,"location":f"{first.get('file')}:{line}" if first.get("file") and line else first.get("file",""),"evidence":els,"engine_evidence":{"impact":impact,"confidence_label":conf,"json_success":data.get("success") if isinstance(data,dict) else None})
+   findings.append({"id":d.get("id") or d.get("check"),"check":d.get("check"),"title":d.get("check") or "Slither detector","description":d.get("description") or "","severity":impact,"confidence":{"high":.9,"medium":.7,"low":.45}.get(conf,.55),"locations":locs,"file":first.get("file"),"line":line,"location":f"{first.get('file')}:{line}" if first.get("file") and line else first.get("file",""),"evidence":els,"engine_evidence":{"impact":impact,"confidence_label":conf,"json_success":data.get("success") if isinstance(data,dict) else None}})
   return findings
  @staticmethod
  def _forge_findings(result):
