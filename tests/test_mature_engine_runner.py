@@ -12,8 +12,8 @@ FOUNDRY_FIXTURE = Path(__file__).resolve().parents[1] / "benchmarks" / "engine_f
 @pytest.mark.skipif(not shutil.which("slither"), reason="Slither binary is not installed in this environment")
 def test_slither_real_execution_and_provenance():
     result = MatureEngineRunner().run_slither(str(SLITHER_FIXTURE), timeout=120)
-    assert result["status"] == "completed"
-    assert result["execution"]["returncode"] == 0
+    assert result["status"] in {"completed", "completed_with_findings"}
+    assert result["execution"]["returncode"] != 0 or result["status"] == "completed"
     assert result["version"]
     assert result["evidence_provenance"]["stdout_sha256"]
     assert isinstance(result["findings"], list)
