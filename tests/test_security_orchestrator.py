@@ -16,24 +16,35 @@ def test_orchestrator_inventory_distinguishes_available_tools(monkeypatch):
 def test_orchestrator_selects_one_heavy_engine_for_reentrancy(monkeypatch):
     monkeypatch.setattr("security_orchestrator.shutil.which", lambda name: "/bin/" + name)
     calls = []
-    def fake_run(command, cwd, timeout):
-        calls.append(command[0])
-        return {"status": "completed", "returncode": 0, "stdout": "{}", "stderr": ""}
+
+    def fake_heavy(tool):
+        def run(*args, **kwargs):
+            calls.append(tool)
+            return {"status": "completed", "returncode": 0, "stdout": "{}", "stderr": ""}
+        return run
+
     orch = SecurityEngineOrchestrator()
-    monkeypatch.setattr(orch, "_run", fake_run)
+    monkeypatch.setattr(orch.core, "run_ityfuzz", fake_heavy("ityfuzz"))
+    monkeypatch.setattr(orch.core, "run_halmos", fake_heavy("halmos"))
     with tempfile.TemporaryDirectory() as td:
-        root = Path(td); (root / "foundry.toml").write_text("")
-        result = orch.run_for_candidates(td, [{"id": "f1", "title": "Reentrancy", "description": "external callback before state update", "priority": 80}], 10)
+        root = Path(td)
+        (root / "foundry.toml").write_text("")
+        result = orch.run_for_candidates(
+            td,
+            [{"id": "f1", "title": "Reentrancy", "description": "external callback before state update", "priority": 80}],
+            10,
+        )
     assert result["decisions"][0]["question"] == "reentrancy"
     assert len(result["decisions"][0]["selected_engines"]) == 1
     assert result["decisions"][0]["selected_engines"][0] in {"ityfuzz", "halmos"}
-    assert len(calls) == 1
+    assert calls == result["decisions"][0]["selected_engines"]
 
 
 def test_orchestrator_defers_deep_stage_without_candidates(monkeypatch):
     monkeypatch.setattr("security_orchestrator.shutil.which", lambda name: None)
     with tempfile.TemporaryDirectory() as td:
-        root = Path(td); (root / "A.sol").write_text("contract A {}")
+        root = Path(td)
+        (root / "A.sol").write_text("contract A {}")
         result = SecurityEngineOrchestrator().orchestrate(td, findings=[])
     assert result["status"] == "orchestration_complete"
     assert result["stage2"]["decisions"] == []
