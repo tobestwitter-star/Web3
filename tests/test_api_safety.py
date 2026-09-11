@@ -106,8 +106,6 @@ def test_backend_target_binding_rejects_unlisted_repository(monkeypatch):
 
 def test_backend_target_binding_rejects_program_record_without_target():
     opportunity = {'id': 'immunefi:fixture'}
-    # A verified program record without a repository/address/root binding must not
-    # silently turn an arbitrary client-supplied source directory into an authorized target.
     import os
     previous = os.environ.pop('BUGHUNTER_AUTHORIZATION_RECORDS', None)
     try:
@@ -128,3 +126,100 @@ def test_backend_target_binding_rejects_program_record_without_target():
             os.environ.pop('BUGHUNTER_AUTHORIZATION_RECORDS', None)
         else:
             os.environ['BUGHUNTER_AUTHORIZATION_RECORDS'] = previous
+
+
+def test_every_protected_target_path_fails_closed_without_binding(monkeypatch):
+    import main
+    opportunity = {'id': 'immunefi:fixture'}
+    monkeypatch.setenv('BUGHUNTER_AUTHORIZATION_RECORDS', json.dumps({
+        'opportunities': {
+            'immunefi:fixture': {
+                'verified': True,
+                'verified_by': 'authorized-reviewer',
+                'basis': 'Explicit authorization record',
+                'repositories': ['https://github.com/example/allowed'],
+            }
+        }
+    }))
+    monkeypatch.setattr(main, '_opportunity', lambda _: opportunity)
+    protected_paths = [
+        '/api/security-tools/analyze',
+        '/api/security-tools/fuzz',
+        '/api/research/acquire',
+        '/api/research/analyze',
+        '/api/research/economic-analysis',
+        '/api/research/queue/run-once',
+        '/api/analyze-advanced',
+        '/api/generate-human-review-report',
+    ]
+    with app.test_request_context('/', method='POST'):
+        for path in protected_paths:
+            from flask import request
+            request.environ['PATH_INFO'] = path
+            request._cached_json = ({}, {})
+            _, error, status = main._protected('immunefi:fixture')
+            assert error is not None, path
+            assert status == 403, path
+
+
+def test_protected_target_path_accepts_only_matching_backend_binding(monkeypatch):
+    import main
+    opportunity = {'id': 'immunefi:fixture'}
+    monkeypatch.setenv('BUGHUNTER_AUTHORIZATION_RECORDS', json.dumps({
+        'opportunities': {
+            'immunefi:fixture': {
+                'verified': True,
+                'verified_by': 'authorized-reviewer',
+                'basis': 'Explicit authorization record',
+                'repositories': ['https://github.com/example/allowed'],
+            }
+        }
+    }))
+    monkeypatch.setattr(main, '_opportunity', lambda _: opportunity)
+    with app.test_request_context('/api/security-tools/analyze', method='POST', json={
+        'opportunity_id': 'immunefi:fixture',
+        'source_url': 'https://github.com/example/not-allowed',
+        'authorized_scope_verified': True,
+    }):
+        _, error, status = main._protected('immunefi:fixture')
+        assert error is not None
+        assert status == 403
+    with app.test_request_context('/api/security-tools/analyze', method='POST', json={
+        'opportunity_id': 'immunefi:fixture',
+        'source_url': 'https://github.com/example/allowed.git',
+        'authorized_scope_verified': False,
+    }):
+        op, error, status = main._protected('immunefi:fixture')
+        assert error is None
+        assert status is None
+        assert op == opportunity
+
+
+def test_contract_binding_is_required_for_contract_target_paths(monkeypatch):
+    import main
+    opportunity = {'id': 'immunefi:fixture'}
+    monkeypatch.setenv('BUGHUNTER_AUTHORIZATION_RECORDS', json.dumps({
+        'opportunities': {
+            'immunefi:fixture': {
+                'verified': True,
+                'verified_by': 'authorized-reviewer',
+                'basis': 'Explicit authorization record',
+                'contract_addresses': ['0x' + '1' * 40],
+            }
+        }
+    }))
+    monkeypatch.setattr(main, '_opportunity', lambda _: opportunity)
+    with app.test_request_context('/api/analyze-advanced', method='POST', json={
+        'opportunity_id': 'immunefi:fixture',
+        'address': '0x' + '2' * 40,
+        'authorized_scope_verified': True,
+    }):
+        _, error, status = main._protected('immunefi:fixture')
+        assert error is not None and status == 403
+    with app.test_request_context('/api/analyze-advanced', method='POST', json={
+        'opportunity_id': 'immunefi:fixture',
+        'address': '0x' + '1' * 40,
+        'authorized_scope_verified': False,
+    }):
+        op, error, status = main._protected('immunefi:fixture')
+        assert op == opportunity and error is None and status is None
