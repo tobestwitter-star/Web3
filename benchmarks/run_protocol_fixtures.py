@@ -59,7 +59,7 @@ def main():
         fd,path=tempfile.mkstemp(prefix="halmos-compatible-",suffix=".json");Path(path).unlink(missing_ok=True);results["halmos_compatible"]=run(["halmos","--json-output",path],cwd=halmos_root);results["halmos_compatible"]["json_output_sha256"]=sha(Path(path).read_text(encoding="utf-8")) if Path(path).exists() else None;results["halmos_compatible"]["json_output"]=(Path(path).read_text(encoding="utf-8")[-30000:] if Path(path).exists() else "");Path(path).unlink(missing_ok=True)
     else: results["halmos_compatible"]={"status":"unavailable","reason":"halmos not installed"}
     if engines["ityfuzz"]["available"]:
-        results["ityfuzz"]=run(["ityfuzz","evm","-m","src/ItyFuzzDeployment.sol:ItyFuzzDeployment","--","forge","build"],timeout=30)
+        results["ityfuzz"]=run(["ityfuzz","evm","-m","script/ItyFuzzDeployment.s.sol:ItyFuzzDeployment","--","forge","build"],timeout=30)
     else: results["ityfuzz"]={"status":"unavailable","reason":"ityfuzz not installed"}
     vuln=[n for n,c in cases.items() if c["vulnerable"]];safe=[n for n,c in cases.items() if not c["vulnerable"]];tp=sum(forge_cases[n]["reproduced"] for n in vuln);fn=len(vuln)-tp;tn=sum(forge_cases[n]["safe_pass"] for n in safe);fp=len(safe)-tn
     provenance_items=[x["execution"] for x in forge_cases.values()]+[static,safe_suite];provenance_ok=sum(all(k in r for k in ("command","cwd","duration_seconds","stdout_sha256","stderr_sha256")) for r in provenance_items)
