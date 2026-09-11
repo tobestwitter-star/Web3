@@ -84,7 +84,7 @@ class ResearchPipeline:
      raw={'id':f.id,'title':f.vulnerability_type,'severity':f.severity,'description':f.description,'location':f.location,'confidence':f.confidence,'evidence':[f.proof_of_concept],'category':f.category};attributed.append(attributor.attribute(raw))
     groups.append({'engine':'existing_analyzer','findings':attributed})
    except Exception as e:groups.append({'engine':'existing_analyzer','findings':[],'error':str(e)})
-  orchestration=self.engine_orchestrator.orchestrate(source_dir,findings=[],timeout=120,explicit=tools)
+  orchestration=self.engine_orchestrator.orchestrate(source_dir,findings=hypotheses,timeout=120,explicit=tools)
   for r in orchestration.get('stage1',{}).get('results',[]):groups.append({'engine':r.get('tool','tool'),'findings':r.get('findings',[])})
   correlated=self.correlator.correlate(groups)
   for h in hypotheses:
