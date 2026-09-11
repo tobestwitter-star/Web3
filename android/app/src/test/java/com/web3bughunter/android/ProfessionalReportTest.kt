@@ -6,39 +6,36 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ProfessionalReportTest {
-    private fun completeReport(): JSONObject {
-        val evidence = JSONArray()
-        evidence.put(JSONObject().put("engine", "slither").put("raw_evidence", JSONArray().put("structured slither evidence")))
-        evidence.put(JSONObject().put("engine", "forge").put("raw_evidence", JSONArray().put("structured forge evidence")))
-        val provenance = JSONArray().put(JSONObject().put("engine", "forge").put("version", "1.0").put("command", "forge test"))
-        val execution = JSONArray().put(JSONObject().put("status", "executed").put("returncode", 0).put("command", "forge test"))
-        val traceData = JSONObject().put("trace", "call trace").put("inputs", JSONObject().put("amount", 1)).put("coverage", JSONObject().put("lines", 42)).put("symbolic", JSONObject().put("status", "executed")).put("invariants", JSONObject().put("status", "executed"))
-        val finding = JSONObject()
-            .put("finding_id", "f-1")
-            .put("title", "Reentrancy")
-            .put("severity", "high")
-            .put("confidence", 0.91)
-            .put("review_status", REPORT_REVIEW_STATUS)
-            .put("duplicate_status", REPORT_DUPLICATE_STATUS)
-            .put("engine_evidence", evidence)
-            .put("engine_provenance", provenance)
-            .put("execution_metadata", execution)
-            .put("reproduction", JSONObject().put("status", "demonstrated").put("evidence", JSONObject().put("trace", "call trace").put("inputs", JSONObject().put("amount", 1))))
-            .put("traces_inputs_coverage_symbolic", traceData)
-            .put("evidence_provenance", JSONArray().put(JSONObject().put("engine", "forge").put("sha256", "abc")))
-            .put("historical_context", JSONArray().put(JSONObject().put("match_type", "semantic_similarity_lead").put("similarity", 0.84)))
-            .put("economic_impact", JSONObject().put("estimated_loss_usd", 125000))
-            .put("remediation", "Update state before external interaction.")
-            .put("limitations", JSONArray().put("Requires independent human reproduction."))
-        return JSONObject()
-            .put("report_version", "1.1")
-            .put("review_status", REPORT_REVIEW_STATUS)
-            .put("do_not_auto_submit", true)
-            .put("human_review_only", true)
-            .put("scope_and_authorization", JSONObject().put("scope", "authorized scope").put("authorization", JSONObject().put("confirmed", true)))
-            .put("limitations", JSONArray().put("Missing evidence is not inferred or fabricated."))
-            .put("findings", JSONArray().put(finding))
-    }
+    private fun completeReport(): JSONObject = JSONObject(
+        """
+        {
+          "report_version":"1.1",
+          "review_status":"UNVERIFIED — HUMAN REVIEW REQUIRED",
+          "do_not_auto_submit":true,
+          "human_review_only":true,
+          "scope_and_authorization":{"scope":"authorized scope","authorization":{"confirmed":true}},
+          "limitations":["Missing evidence is not inferred or fabricated."],
+          "findings":[{
+            "finding_id":"f-1",
+            "title":"Reentrancy",
+            "severity":"high",
+            "confidence":0.91,
+            "review_status":"UNVERIFIED — HUMAN REVIEW REQUIRED",
+            "duplicate_status":"POSSIBLE DUPLICATE — HUMAN REVIEW REQUIRED",
+            "engine_evidence":[{"engine":"slither","raw_evidence":["structured slither evidence"]},{"engine":"forge","raw_evidence":["structured forge evidence"]}],
+            "engine_provenance":[{"engine":"forge","version":"1.0","command":"forge test"}],
+            "execution_metadata":[{"status":"executed","returncode":0,"command":"forge test"}],
+            "reproduction":{"status":"demonstrated","evidence":{"trace":"call trace","inputs":{"amount":1}}},
+            "traces_inputs_coverage_symbolic":{"trace":"call trace","inputs":{"amount":1},"coverage":{"lines":42},"symbolic":{"status":"executed"},"invariants":{"status":"executed"}},
+            "evidence_provenance":[{"engine":"forge","sha256":"abc"}],
+            "historical_context":[{"match_type":"semantic_similarity_lead","similarity":0.84}],
+            "economic_impact":{"estimated_loss_usd":125000},
+            "remediation":"Update state before external interaction.",
+            "limitations":["Requires independent human reproduction."]
+          }]
+        }
+        """.trimIndent()
+    )
 
     @Test fun completeStructuredReportPreservesAuthoritativeFields() {
         val report = completeReport().toProfessionalReport()
@@ -52,25 +49,25 @@ class ProfessionalReportTest {
         assertEquals(2, finding.getJSONArray("engine_evidence").length())
         assertEquals(1, finding.getJSONArray("engine_provenance").length())
         assertTrue(report.hasDemonstratedEvidence(finding))
+        assertEquals("abc", finding.getJSONArray("evidence_provenance").getJSONObject(0).getString("sha256"))
     }
 
     @Test fun unknownFieldsAndPartialReportsRemainForwardCompatible() {
-        val report = JSONObject().put("review_status", REPORT_REVIEW_STATUS).put("future_field", JSONObject().put("value", true)).put("findings", JSONArray().put(JSONObject().put("finding_id", "f-2").put("severity", "medium").put("unknown_engine_field", "preserve raw JSON")))
-        val parsed = report.toProfessionalReport()
-        assertEquals(REPORT_REVIEW_STATUS, parsed.reviewStatus)
-        assertEquals("preserve raw JSON", parsed.finding(0)!!.getString("unknown_engine_field"))
-        assertFalse(parsed.hasDemonstratedEvidence(parsed.finding(0)!!))
+        val report = JSONObject("""{"review_status":"UNVERIFIED — HUMAN REVIEW REQUIRED","future_field":{"value":true},"findings":[{"finding_id":"f-2","severity":"medium","unknown_engine_field":"preserve raw JSON"}]}""").toProfessionalReport()
+        assertEquals(REPORT_REVIEW_STATUS, report.reviewStatus)
+        assertEquals("preserve raw JSON", report.finding(0)!!.getString("unknown_engine_field"))
+        assertFalse(report.hasDemonstratedEvidence(report.finding(0)!!))
     }
 
     @Test fun missingEvidenceIsDistinctFromDemonstratedEvidence() {
-        val finding = JSONObject().put("finding_id", "f-3").put("reproduction", JSONObject().put("status", "not demonstrated").put("evidence", JSONObject.NULL))
+        val finding = JSONObject("""{"finding_id":"f-3","reproduction":{"status":"not demonstrated","evidence":null}}""")
         val report = JSONObject().put("findings", JSONArray().put(finding)).toProfessionalReport()
         assertFalse(report.hasDemonstratedEvidence(report.finding(0)!!))
         assertEquals("not demonstrated", report.finding(0)!!.getJSONObject("reproduction").getString("status"))
     }
 
     @Test fun malformedEvidenceDoesNotBecomeAnExecutionClaim() {
-        val finding = JSONObject().put("finding_id", "f-4").put("reproduction", "malformed")
+        val finding = JSONObject("""{"finding_id":"f-4","reproduction":"malformed"}""")
         val report = JSONObject().put("findings", JSONArray().put(finding)).toProfessionalReport()
         assertFalse(report.hasDemonstratedEvidence(report.finding(0)!!))
         assertEquals("malformed", report.finding(0)!!.getString("reproduction"))
