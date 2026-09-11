@@ -8,7 +8,7 @@ def _sha256(text:str)->str:return hashlib.sha256(text.encode("utf-8","replace"))
 class MatureEngineRunner:
  MAX_TIMEOUT=180; MAX_OUTPUT=50000
  def inventory(self)->Dict[str,Dict[str,Any]]:
-  return {"slither":self._engine("slither","AGPL-3.0-or-later","crytic/slither"),"forge":self._engine("forge","Apache-2.0 OR MIT","foundry-rs/foundry"),"halmos":self._engine("halmos","AGPL-3.0-or-later","a16z/halmos")}
+  return {"slither":self._engine("slither","AGPL-3.0-or-later","crytic/slither"),"forge":self._engine("forge","Apache-2.0 OR MIT","foundry-rs/foundry"),"halmos":self._engine("halmos","AGPL-3.0-or-later","a16z/halmos"),"ityfuzz":self._engine("ityfuzz","MIT","fuzzland/ityfuzz")}
  @staticmethod
  def _engine(binary,license_name,project):
   path=shutil.which(binary);return {"binary":binary,"path":path,"available":bool(path),"license":license_name,"project":project}
@@ -33,7 +33,7 @@ class MatureEngineRunner:
   except subprocess.TimeoutExpired as e:
    out=e.stdout or "";err=e.stderr or "";out=out.decode("utf-8","replace") if isinstance(out,bytes) else out;err=err.decode("utf-8","replace") if isinstance(err,bytes) else err
    return {"status":"timeout","error":f"execution exceeded {bounded}s timeout","stdout":out[-self.MAX_OUTPUT:],"stderr":err[-self.MAX_OUTPUT:],"stdout_sha256":_sha256(out),"stderr_sha256":_sha256(err),"duration_seconds":bounded,"command":command,"cwd":os.path.abspath(cwd)}
-  except OSError as e:return {"status":"failed","error":str(e),"command":command,"cwd":os.path.abspath(cwd)}
+  except OSError as e:return {"status":"failed","error":str(e),"command":command}
  def _version(self,binary,cwd)->Optional[str]:
   if not shutil.which(binary):return None
   r=self._run([binary,"--version"],cwd,15);text=(r.get("stdout","")+"\n"+r.get("stderr","")).strip();return text.splitlines()[0][:500] if text else None
@@ -50,7 +50,7 @@ class MatureEngineRunner:
     m=e.get("source_mapping") or {};f=m.get("filename_relative") or m.get("filename_absolute");lines=m.get("lines") or []
     if f:locs.append({"file":f,"lines":lines,"name":e.get("name"),"type":e.get("type")})
    impact=str(d.get("impact") or "informational").lower();conf=str(d.get("confidence") or "medium").lower();first=locs[0] if locs else {};line=(first.get("lines") or [None])[0]
-   findings.append({"id":d.get("id") or d.get("check"),"check":d.get("check"),"title":d.get("check") or "Slither detector","description":d.get("description") or "","severity":impact,"confidence":{"high":.9,"medium":.7,"low":.45}.get(conf,.55),"locations":locs,"file":first.get("file"),"line":line,"location":f"{first.get('file')}:{line}" if first.get("file") and line else first.get("file",""),"evidence":els,"engine_evidence":{"impact":impact,"confidence_label":conf,"json_success":data.get("success") if isinstance(data,dict) else None}})
+   findings.append({"id":d.get("id") or d.get("check"),"check":d.get("check"),"title":d.get("check") or "Slither detector","description":d.get("description") or "","severity":impact,"confidence":{"high":.9,"medium":.7,"low":.45}.get(conf,.55),"locations":locs,"file":first.get("file"),"line":line,"location":f"{first.get('file')}:{line}" if first.get("file") and line else first.get("file",""),"evidence":els,"engine_evidence":{"impact":impact,"confidence_label":conf,"json_success":data.get("success") if isinstance(data,dict) else None})
   return findings
  @staticmethod
  def _forge_findings(result):
@@ -60,14 +60,13 @@ class MatureEngineRunner:
   findings=[]
   if isinstance(json_data,dict):
    items=json_data.get("tests") or json_data.get("results") or []
-   if isinstance(items,dict): items=list(items.values())
+   if isinstance(items,dict):items=list(items.values())
    if isinstance(items,list):
     for item in items:
      if not isinstance(item,dict):continue
      status=str(item.get("status") or item.get("result") or "").lower()
      if status in {"fail","failed","counterexample","error"} or item.get("num_cexes",0):
-      name=item.get("test") or item.get("name") or item.get("funsig") or "Halmos symbolic test"
-      findings.append({"id":_sha256("halmos|"+str(name))[:16],"title":"Halmos symbolic test result","description":str(item.get("reason") or item.get("error") or status),"severity":"informational","confidence":.7,"category":"validation_evidence","evidence":[item],"is_vulnerability":False})
+      name=item.get("test") or item.get("name") or item.get("funsig") or "Halmos symbolic test";findings.append({"id":_sha256("halmos|"+str(name))[:16],"title":"Halmos symbolic test result","description":str(item.get("reason") or item.get("error") or status),"severity":"informational","confidence":.7,"category":"validation_evidence","evidence":[item],"is_vulnerability":False})
   return findings
  def run_slither(self,source_dir,timeout=120):
   if not os.path.isdir(source_dir):return {"tool":"slither","status":"failed","error":"source directory does not exist","findings":[]}
@@ -84,8 +83,7 @@ class MatureEngineRunner:
   if not meta["available"]:return {"tool":"forge","status":"not_available","available":False,"error":"forge is not installed","findings":[]}
   build=self._build_system(source_dir)
   if build!="foundry":return {"tool":"forge","status":"not_applicable","available":True,"build_system":build,"error":"foundry.toml is absent; target was not mutated to create one","findings":[]}
-  r=self._run(["forge","test","--json","-vvv"],source_dir,timeout)
-  return {"tool":"forge","status":r["status"],"available":True,"version":self._version("forge",source_dir),"build_system":build,"execution":r,"findings":self._forge_findings(r),"evidence_provenance":{"engine":"forge","command":r.get("command"),"cwd":r.get("cwd"),"stdout_sha256":r.get("stdout_sha256"),"stderr_sha256":r.get("stderr_sha256")},"review_status":STATUS}
+  r=self._run(["forge","test","--json","-vvv"],source_dir,timeout);return {"tool":"forge","status":r["status"],"available":True,"version":self._version("forge",source_dir),"build_system":build,"execution":r,"findings":self._forge_findings(r),"evidence_provenance":{"engine":"forge","command":r.get("command"),"cwd":r.get("cwd"),"stdout_sha256":r.get("stdout_sha256"),"stderr_sha256":r.get("stderr_sha256")},"review_status":STATUS}
  def run_halmos(self,source_dir,timeout=120):
   if not os.path.isdir(source_dir):return {"tool":"halmos","status":"failed","error":"source directory does not exist","findings":[]}
   meta=self.inventory()["halmos"]
@@ -94,13 +92,19 @@ class MatureEngineRunner:
   if build!="foundry":return {"tool":"halmos","status":"not_applicable","available":True,"build_system":build,"error":"Halmos requires a Foundry-style target; target was not mutated","findings":[]}
   fd,path=tempfile.mkstemp(prefix="halmos-",suffix=".json");os.close(fd)
   try:
-   r=self._run(["halmos","--json-output",path],source_dir,timeout)
-   parsed=None
+   r=self._run(["halmos","--json-output",path],source_dir,timeout);parsed=None
    try:parsed=json.loads(Path(path).read_text(encoding="utf-8")) if os.path.exists(path) else None
    except (OSError,ValueError,TypeError):parsed=None
-   findings=self._halmos_findings(parsed)
-   return {"tool":"halmos","status":r["status"],"available":True,"version":self._version("halmos",source_dir),"build_system":build,"execution":r,"json_output":parsed,"findings":findings,"evidence_provenance":{"engine":"halmos","command":r.get("command"),"cwd":r.get("cwd"),"stdout_sha256":r.get("stdout_sha256"),"stderr_sha256":r.get("stderr_sha256"),"json_output_sha256":_sha256(Path(path).read_text(encoding="utf-8")) if os.path.exists(path) else None},"review_status":STATUS}
+   return {"tool":"halmos","status":r["status"],"available":True,"version":self._version("halmos",source_dir),"build_system":build,"execution":r,"json_output":parsed,"findings":self._halmos_findings(parsed),"evidence_provenance":{"engine":"halmos","command":r.get("command"),"cwd":r.get("cwd"),"stdout_sha256":r.get("stdout_sha256"),"stderr_sha256":r.get("stderr_sha256"),"json_output_sha256":_sha256(Path(path).read_text(encoding="utf-8")) if os.path.exists(path) else None},"review_status":STATUS}
   finally:
    try:os.unlink(path)
    except OSError:pass
+ def run_ityfuzz(self,source_dir,timeout=120):
+  if not os.path.isdir(source_dir):return {"tool":"ityfuzz","status":"failed","error":"source directory does not exist","findings":[]}
+  meta=self.inventory()["ityfuzz"]
+  if not meta["available"]:return {"tool":"ityfuzz","status":"not_available","available":False,"error":"ityfuzz is not installed","findings":[]}
+  build=self._build_system(source_dir)
+  if build!="foundry":return {"tool":"ityfuzz","status":"not_applicable","available":True,"build_system":build,"error":"ItyFuzz escalation requires a Foundry-style Solidity target; target was not mutated","findings":[]}
+  r=self._run(["ityfuzz","evm","--forge-build","."],source_dir,timeout)
+  return {"tool":"ityfuzz","status":r["status"],"available":True,"version":self._version("ityfuzz",source_dir),"build_system":build,"execution":r,"findings":[],"evidence_provenance":{"engine":"ityfuzz","command":r.get("command"),"cwd":r.get("cwd"),"stdout_sha256":r.get("stdout_sha256"),"stderr_sha256":r.get("stderr_sha256")},"review_status":STATUS}
  def run_core(self,source_dir,timeout=120):return {"status":"core_engine_execution_complete","build_system":self._build_system(source_dir),"engines":[self.run_slither(source_dir,timeout),self.run_foundry(source_dir,timeout)],"review_status":STATUS}
