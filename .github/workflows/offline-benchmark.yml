@@ -45,6 +45,10 @@ jobs:
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: python benchmarks/run_protocol_quality.py
+      - name: Run executable local protocol fixture benchmark with real engines
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: python benchmarks/run_protocol_fixtures.py
       - name: Upload benchmark report
         uses: actions/upload-artifact@v4
         with:
