@@ -7,6 +7,7 @@ from typing import Any,Dict,List
 from urllib.parse import urlparse
 from advanced_web3_analyzer import AdvancedWeb3Analyzer
 from security_toolchain import SecurityToolchain
+from security_orchestrator import SecurityEngineOrchestrator
 from target_resolution import ScopeResolver,BuildDetector,TargetMap
 from protocol_research import ProtocolMapper,BusinessLogicEngine,FindingPrioritizer,AttackPathEngine
 from historical_intelligence import HistoricalIntelligence
@@ -38,7 +39,7 @@ class TargetAcquirer:
   except (FileNotFoundError,subprocess.TimeoutExpired) as e:return {'ok':False,'error':str(e)}
 class FindingCorrelator:
  SEVERITY={'critical':4,'high':3,'medium':2,'low':1,'informational':0};STOP={'the','and','with','risk','potential','attack','vulnerability','issue','complex','broken','advanced','business','logic'}
- TOOL_OBSERVATION_ONLY={'solc-version','naming-convention','immutable-states','constable-states','timestamp','missing-zero-check','unused-return','uninitialized-state','low-level-calls','locked-ether','reentrancy-no-eth','redundant-statements'}
+ TOOL_OBSERVATION_ONLY={'solc-version','naming-convention','immutable-states','constable-states','timestamp','missing-zero-check','unused-return','low-level-calls','locked-ether','reentrancy-no-eth','redundant-statements'}
  def normalize(self,f,engine):
   text=' '.join(str(f.get(k,'')) for k in ('title','vulnerability','description','message','check'));loc=str(f.get('location') or f.get('path') or f.get('source') or '');sev=str(f.get('severity') or 'medium').lower();category=str(f.get('category') or '').lower();tokens=set(re.findall(r'[a-z0-9]{4,}',text.lower()))-self.STOP;raw=f.get('evidence',[]);evidence=raw if isinstance(raw,list) else [raw]
   out={'id':f.get('id') or hashlib.sha256((text+'|'+loc).encode()).hexdigest()[:16],'engine':engine,'title':f.get('title') or f.get('vulnerability') or f.get('check') or engine,'description':text[:4000],'location':loc,'severity':sev,'category':category,'confidence':float(f.get('confidence',.45) or .45),'evidence':evidence,'tokens':tokens,'fingerprint':hashlib.sha256((re.sub(r'\s+',' ',text.lower())+'|'+loc.lower()).encode()).hexdigest()}
@@ -69,9 +70,9 @@ class FindingCorrelator:
    f=triage_finding(f);f['validated_by_multiple_tools']=len(f['engines'])>=2;f['status']=STATUS;f['priority']=round(self.SEVERITY.get(f['severity'],2)*25+min(25,f['cross_tool_confidence']*25)+(10 if f['validated_by_multiple_tools'] else 0),2);f.pop('tokens',None);result.append(f)
   return sorted(result,key=lambda x:x.get('priority',0),reverse=True)
 class ResearchPipeline:
- def __init__(self):self.acquirer=TargetAcquirer();self.tools=SecurityToolchain();self.correlator=FindingCorrelator();self.scope=ScopeResolver();self.build=BuildDetector();self.mapper=ProtocolMapper();self.paths=AttackPathEngine();self.logic=BusinessLogicEngine();self.prioritizer=FindingPrioritizer();self.history=HistoricalIntelligence();self.economics=EconomicAnalyzer()
+ def __init__(self):self.acquirer=TargetAcquirer();self.tools=SecurityToolchain();self.engine_orchestrator=SecurityEngineOrchestrator(self.tools);self.correlator=FindingCorrelator();self.scope=ScopeResolver();self.build=BuildDetector();self.mapper=ProtocolMapper();self.paths=AttackPathEngine();self.logic=BusinessLogicEngine();self.prioritizer=FindingPrioritizer();self.history=HistoricalIntelligence();self.economics=EconomicAnalyzer()
  def plan(self,opportunity,public_evidence=''):
-  scope=self.scope.resolve(opportunity,public_evidence);return {'opportunity':opportunity,'scope':scope,'target_map':TargetMap().build(scope,{'detected':[],'primary':None}),'targets':[t.to_dict() for t in self.acquirer.extract_targets(opportunity,public_evidence)],'tools':self.tools.inventory(),'authorization_required':True,'active_testing_allowed':bool(opportunity.get('authorization_confirmed'))}
+  scope=self.scope.resolve(opportunity,public_evidence);return {'opportunity':opportunity,'scope':scope,'target_map':TargetMap().build(scope,{'detected':[],'primary':None}),'targets':[t.to_dict() for t in self.acquirer.extract_targets(opportunity,public_evidence)],'tools':self.engine_orchestrator.inventory(),'authorization_required':True,'active_testing_allowed':bool(opportunity.get('authorization_confirmed'))}
  def analyze_local(self,source_dir,protocol_name,source_code=None,authorization_confirmed=False,tools=None,opportunity=None):
   if not authorization_confirmed:return {'status':'blocked','reason':'Explicit authorization confirmation is required before analysis/testing.','findings':[]}
   if not Path(source_dir).is_dir():return {'status':'error','reason':'source directory does not exist','findings':[]}
@@ -83,17 +84,17 @@ class ResearchPipeline:
      raw={'id':f.id,'title':f.vulnerability_type,'severity':f.severity,'description':f.description,'location':f.location,'confidence':f.confidence,'evidence':[f.proof_of_concept],'category':f.category};attributed.append(attributor.attribute(raw))
     groups.append({'engine':'existing_analyzer','findings':attributed})
    except Exception as e:groups.append({'engine':'existing_analyzer','findings':[],'error':str(e)})
-  tr=self.tools.analyze(source_dir,tools or ['slither','aderyn','wake'],120)
-  for r in tr.get('results',[]):groups.append({'engine':r.get('name','tool'),'findings':r.get('findings',[])})
+  orchestration=self.engine_orchestrator.orchestrate(source_dir,findings=[],timeout=120,explicit=tools)
+  for r in orchestration.get('stage1',{}).get('results',[]):groups.append({'engine':r.get('tool','tool'),'findings':r.get('findings',[])})
   correlated=self.correlator.correlate(groups)
   for h in hypotheses:
    h['independent_signals']=1;h['reproducibility']=0.0;h['economic_impact_score']=.65 if h['category'] in ('asset_flow','accounting','oracle','privilege') else .4;h['attacker_privilege']='user';h['economic_analysis']=self.economics.analyze(h);h['status']=STATUS;h['kind']='exploratory_hypothesis'
-  triaged_findings=list(correlated)
-  combined=[f for f in correlated if f.get('bounty_candidate',True)]
+  triaged_findings=list(correlated);combined=[f for f in correlated if f.get('bounty_candidate',True)]
   for f in combined:
    exact=[p for p in attack_paths if p.get('entry_point','')==f'{f.get("contract","")}.{f.get("function","")}' or (f.get('function') and p.get('entry_point','').split('.')[-1]==str(f.get('function')))]
    f['attack_paths']=exact[:3];f['attack_path_uncertain']=not bool(exact);f['economic_analysis']=self.economics.analyze(f);f['status']=STATUS
-  ranked=self.prioritizer.rank(combined,opportunity);candidate_validation=self.tools.generate_and_validate(source_dir,ranked[:10],True,180);symbolic=self.tools.run_symbolic(source_dir,180);invariants=self.tools.run_invariants(source_dir,180);upgrade_surface=self.tools.upgrade_surface(source_dir)
+  ranked=self.prioritizer.rank(combined,opportunity)
+  candidate_validation=self.tools.generate_and_validate(source_dir,ranked[:10],True,180);symbolic=self.tools.run_symbolic(source_dir,180);invariants=self.tools.run_invariants(source_dir,180)
   for c in candidate_validation.get('candidates',[]):
    for ex in c.get('execution',[]):
     if ex.get('status')=='executed':
@@ -101,4 +102,4 @@ class ResearchPipeline:
       if f.get('id')==c.get('finding_id'):
        ev=ex.get('evidence') or {};f['execution_evidence']=ev or {'returncode':ex.get('returncode'),'candidate_failed':ex.get('candidate_failed'),'stdout':ex.get('stdout','')[-12000:],'stderr':ex.get('stderr','')[-8000:]};f['reproducibility']=float(ev.get('reproducibility_score',0.0));f['status']=STATUS
   ranked=self.prioritizer.rank(ranked,opportunity)
-  return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'protocol_map':protocol_map,'attack_paths':attack_paths,'business_logic_hypotheses':hypotheses[:100],'tool_results':tr,'symbolic_validation':symbolic,'invariant_validation':invariants,'upgrade_surface':upgrade_surface,'triaged_findings':triaged_findings,'correlated_findings':ranked,'exploit_test_candidates':candidate_validation,'historical_search_leads':[self.history.search_urls(f.get('title',''),f.get('category','')) for f in ranked[:10]],'review_status':STATUS}
+  return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'protocol_map':protocol_map,'attack_paths':attack_paths,'business_logic_hypotheses':hypotheses[:100],'tool_results':orchestration.get('stage1',{}).get('results',[]),'security_engine_orchestration':orchestration,'symbolic_validation':symbolic,'invariant_validation':invariants,'upgrade_surface':self.tools.upgrade_surface(source_dir),'triaged_findings':triaged_findings,'correlated_findings':ranked,'exploit_test_candidates':candidate_validation,'historical_search_leads':[self.history.search_urls(f.get('title',''),f.get('category','')) for f in ranked[:10]],'review_status':STATUS}
