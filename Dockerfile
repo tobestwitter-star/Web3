@@ -6,8 +6,9 @@ RUN apt-get update \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN curl -L https://foundry.paradigm.xyz | bash \
-    && /root/.foundry/bin/foundryup
-ENV PATH="/root/.foundry/bin:${PATH}"
+    && export PATH="/root/.config/.foundry/bin:$PATH" \
+    && foundryup
+ENV PATH="/root/.config/.foundry/bin:${PATH}"
 COPY . .
 ENV PORT=8080
 EXPOSE 8080

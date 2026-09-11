@@ -29,8 +29,9 @@ jobs:
       - name: Install Foundry
         run: |
           curl -L https://foundry.paradigm.xyz | bash
-          "$HOME/.foundry/bin/foundryup"
-          echo "$HOME/.foundry/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.config/.foundry/bin:$PATH"
+          foundryup
+          echo "$HOME/.config/.foundry/bin" >> "$GITHUB_PATH"
       - name: Install Solidity compiler used by fixture
         run: |
           solc-select install 0.8.20
