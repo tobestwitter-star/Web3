@@ -3,7 +3,6 @@ from __future__ import annotations
 import json, os
 from pathlib import Path
 from typing import Any, Dict, Iterable
-from urllib.parse import urlparse
 
 class AuthorizationPolicy:
     """Fail-closed authorization sourced only from backend configuration.
@@ -37,7 +36,9 @@ class AuthorizationPolicy:
     @classmethod
     def verified(cls, opportunity: Dict[str, Any]) -> bool:
         record = cls.record(str(opportunity.get("id", "")))
-        return bool(record.get("verified") is True and str(record.get("verified_by", "")).strip() and str(record.get("basis", "")).strip())
+        if not bool(record.get("verified") is True and str(record.get("verified_by", "")).strip() and str(record.get("basis", "")).strip()):
+            return False
+        return cls._request_target_is_authorized(opportunity)
 
     @classmethod
     def _allowed_values(cls, record: Dict[str, Any], *keys: str) -> list[str]:
@@ -52,19 +53,20 @@ class AuthorizationPolicy:
 
     @classmethod
     def target_allowed(cls, opportunity: Dict[str, Any], target: Dict[str, Any]) -> tuple[bool, str]:
-        """Require an authorized opportunity *and* an explicitly recorded target.
+        """Require an authorized opportunity and an explicitly recorded target.
 
-        The backend record may optionally bind authorization to repository URLs,
-        contract addresses, or local workspace roots. If a binding is supplied, a
-        target must match it. If no binding is supplied, protected API authorization
-        remains valid for program-level operations, but target-sensitive operations
-        should fail closed rather than treating a client-provided target as authorized.
+        A backend authorization record must bind the requested target to a repository,
+        contract address, or local source root. Client-provided authorization flags and
+        public scope evidence are deliberately ignored.
         """
-        if not cls.verified(opportunity):
+        if not cls._record_verified(opportunity):
             return False, "Backend authorization record is missing or unverified."
         record = cls.record(str(opportunity.get("id", "")))
         source_url = str(target.get("source_url") or target.get("repository") or "").strip()
         address_values = [str(v).strip().lower() for v in (target.get("addresses") or target.get("contracts") or []) if str(v).strip()]
+        single_address = str(target.get("address") or target.get("contract_address") or "").strip().lower()
+        if single_address:
+            address_values.append(single_address)
         allowed_urls = cls._allowed_values(record, "repositories", "source_urls", "targets")
         allowed_addresses = [v.lower() for v in cls._allowed_values(record, "contract_addresses", "addresses")]
         allowed_roots = [str(v).strip() for v in cls._allowed_values(record, "source_roots", "workspace_roots")]
@@ -91,15 +93,80 @@ class AuthorizationPolicy:
         return False, "Target is not explicitly bound to the backend authorization record."
 
     @classmethod
+    def _record_verified(cls, opportunity: Dict[str, Any]) -> bool:
+        record = cls.record(str(opportunity.get("id", "")))
+        return bool(record.get("verified") is True and str(record.get("verified_by", "")).strip() and str(record.get("basis", "")).strip())
+
+    @classmethod
+    def _request_target_required(cls) -> bool:
+        """Identify Flask API paths that perform target-sensitive operations.
+
+        This hook is intentionally narrow. Public discovery, ranking, scope planning,
+        history lookup, and queue administration remain program-level/public operations;
+        actual acquisition, engine execution, reproduction-oriented analysis, economic
+        analysis, and report generation are target-sensitive and therefore require a
+        backend target binding.
+        """
+        try:
+            from flask import has_request_context, request
+            if not has_request_context():
+                return False
+            return request.path in {
+                "/api/security-tools/analyze",
+                "/api/security-tools/fuzz",
+                "/api/research/acquire",
+                "/api/research/analyze",
+                "/api/research/economic-analysis",
+                "/api/research/queue/run-once",
+                "/api/analyze-advanced",
+                "/api/generate-human-review-report",
+            }
+        except Exception:
+            return False
+
+    @classmethod
+    def _request_target(cls) -> Dict[str, Any]:
+        try:
+            from flask import has_request_context, request
+            if not has_request_context():
+                return {}
+            data = request.get_json(silent=True) or {}
+            target = data.get("target") if isinstance(data.get("target"), dict) else {}
+            merged = dict(target)
+            for key in ("source_url", "repository", "source_dir", "address", "contract_address", "addresses", "contracts"):
+                if key in data and key not in merged:
+                    merged[key] = data.get(key)
+            return merged
+        except Exception:
+            return {}
+
+    @classmethod
+    def _request_target_is_authorized(cls, opportunity: Dict[str, Any]) -> bool:
+        if not cls._request_target_required():
+            return True
+        target = cls._request_target()
+        allowed, _ = cls.target_allowed(opportunity, target)
+        return allowed
+
+    @classmethod
     def status(cls, opportunity: Dict[str, Any], targets: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
         record = cls.record(str(opportunity.get("id", "")))
-        verified = cls.verified(opportunity)
-        authorized = [t.get("identifier") for t in targets if verified and t.get("explicitly_published") is True and t.get("identifier")]
+        record_verified = cls._record_verified(opportunity)
+        request_target_required = cls._request_target_required()
+        request_target = cls._request_target() if request_target_required else None
+        request_target_allowed = True
+        request_target_reason = "Not applicable outside target-sensitive API paths."
+        if request_target_required and record_verified:
+            request_target_allowed, request_target_reason = cls.target_allowed(opportunity, request_target or {})
+        verified = record_verified and request_target_allowed
+        authorized = [t.get("identifier") for t in targets if record_verified and t.get("explicitly_published") is True and t.get("identifier")]
         return {
             "verified": verified,
             "authorized_targets": authorized,
             "verified_by": record.get("verified_by") if verified else None,
             "basis": record.get("basis") if verified else None,
-            "reason": "Backend authorization is not established; public scope evidence and client confirmation are insufficient." if not verified else "Backend authorization record verified.",
-            "target_binding_configured": bool(cls._allowed_values(record, "repositories", "source_urls", "targets", "contract_addresses", "addresses", "source_roots", "workspace_roots")) if verified else False,
+            "reason": request_target_reason if request_target_required else ("Backend authorization is not established; public scope evidence and client confirmation are insufficient." if not record_verified else "Backend authorization record verified."),
+            "target_binding_configured": bool(cls._allowed_values(record, "repositories", "source_urls", "targets", "contract_addresses", "addresses", "source_roots", "workspace_roots")) if record_verified else False,
+            "request_target_required": request_target_required,
+            "request_target_allowed": request_target_allowed,
         }
