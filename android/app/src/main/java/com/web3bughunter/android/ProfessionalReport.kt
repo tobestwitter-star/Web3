@@ -7,7 +7,7 @@ const val REPORT_REVIEW_STATUS = "UNVERIFIED — HUMAN REVIEW REQUIRED"
 const val REPORT_DUPLICATE_STATUS = "POSSIBLE DUPLICATE — HUMAN REVIEW REQUIRED"
 
 data class ProfessionalReport(val raw: JSONObject) {
-    val reviewStatus: String get() = raw.optString("review_status", REPORT_REVIEW_STATUS)
+    val reviewStatus: String get() = raw.optString("review_status").ifBlank { REPORT_REVIEW_STATUS }
     val doNotAutoSubmit: Boolean get() = raw.optBoolean("do_not_auto_submit", true)
     val humanReviewOnly: Boolean get() = raw.optBoolean("human_review_only", true)
     val findings: JSONArray get() = raw.optJSONArray("findings") ?: JSONArray()
@@ -17,10 +17,10 @@ data class ProfessionalReport(val raw: JSONObject) {
     fun finding(index: Int): JSONObject? = findings.optJSONObject(index)
 
     fun findingStatus(finding: JSONObject): String =
-        finding.optString("review_status", reviewStatus)
+        finding.optString("review_status").ifBlank { reviewStatus }
 
     fun duplicateStatus(finding: JSONObject): String =
-        finding.optString("duplicate_status", "")
+        finding.optString("duplicate_status")
 
     fun hasDemonstratedEvidence(finding: JSONObject): Boolean {
         val evidence = finding.optJSONArray("engine_evidence")
