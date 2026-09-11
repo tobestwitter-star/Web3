@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Run the bundled safe security-engine fixture inside the production runtime."""
 import json
+import sys
 from pathlib import Path
-from security_orchestrator import SecurityEngineOrchestrator
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from security_orchestrator import SecurityEngineOrchestrator
+
 FIXTURE = ROOT / "benchmarks" / "engine_fixture"
 SLITHER_FIXTURE = ROOT / "benchmarks" / "slither_fixture"
 
