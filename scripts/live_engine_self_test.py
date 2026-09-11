@@ -27,7 +27,15 @@ def main() -> int:
     payload = {"status": "completed", "inventory": {**required, **advisory}, "stage1": stage1, "halmos": halmos}
     print(json.dumps(payload, sort_keys=True, default=str), flush=True)
     allowed_stage1 = {"completed", "completed_with_findings"}
-    if any(item.get("integration", {}).get("status") not in allowed_stage1 and item.get("result", {}).get("status") not in allowed_stage1 for item in stage1["results"]):
+    for item in stage1["results"]:
+        observed = item.get("integration", {}).get("status") or item.get("result", {}).get("status")
+        if observed in allowed_stage1:
+            continue
+        # OSV-Scanner and Gitleaks legitimately return exit code 1 when they
+        # find vulnerabilities/secrets. Their raw return code and evidence are
+        # preserved, so that outcome is a successful invocation with findings.
+        if item.get("tool") in {"osv-scanner", "gitleaks"} and item.get("result", {}).get("returncode") == 1:
+            continue
         return 1
     if halmos.get("status") not in {"completed", "failed"}:
         return 1
