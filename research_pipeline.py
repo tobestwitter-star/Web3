@@ -15,6 +15,7 @@ from economic_analysis import EconomicAnalyzer
 from evidence_attribution import SourceAttributor
 from candidate_triage import triage_finding
 STATUS='UNVERIFIED — HUMAN REVIEW REQUIRED'
+DUPLICATE='POSSIBLE DUPLICATE — HUMAN REVIEW REQUIRED'
 @dataclass
 class Target:
  name:str;source_url:str;kind:str='repository';branch:str='';authorized:bool=False;scope_evidence:str='';addresses:List[str]=None;contracts:List[str]=None;assets:List[str]=None
@@ -73,6 +74,17 @@ class ResearchPipeline:
  def __init__(self):self.acquirer=TargetAcquirer();self.tools=SecurityToolchain();self.engine_orchestrator=SecurityEngineOrchestrator(self.tools);self.correlator=FindingCorrelator();self.scope=ScopeResolver();self.build=BuildDetector();self.mapper=ProtocolMapper();self.paths=AttackPathEngine();self.logic=BusinessLogicEngine();self.prioritizer=FindingPrioritizer();self.history=HistoricalIntelligence();self.economics=EconomicAnalyzer()
  def plan(self,opportunity,public_evidence=''):
   scope=self.scope.resolve(opportunity,public_evidence);return {'opportunity':opportunity,'scope':scope,'target_map':TargetMap().build(scope,{'detected':[],'primary':None}),'targets':[t.to_dict() for t in self.acquirer.extract_targets(opportunity,public_evidence)],'tools':self.engine_orchestrator.inventory(),'authorization_required':True,'active_testing_allowed':bool(opportunity.get('authorization_confirmed'))}
+ def _historical_context(self,findings):
+  context=[]
+  for finding in findings[:10]:
+   lookup=self.history.lookup(finding,['defi_hacklabs','github_code_search'],5)
+   finding['historical_intelligence']=lookup
+   finding['possible_duplicate_indicators']=lookup.get('matches',[])
+   finding['historical_context']= [{'source':m['reference'].get('source'),'reference':m['reference'].get('reference'),'similarity':m['similarity'],'match_type':m['match_type']} for m in lookup.get('matches',[])]
+   finding['duplicate_classification']=DUPLICATE if lookup.get('matches') else 'no historical match established'
+   finding['status']=STATUS
+   context.append(lookup)
+  return context
  def analyze_local(self,source_dir,protocol_name,source_code=None,authorization_confirmed=False,tools=None,opportunity=None):
   if not authorization_confirmed:return {'status':'blocked','reason':'Explicit authorization confirmation is required before analysis/testing.','findings':[]}
   if not Path(source_dir).is_dir():return {'status':'error','reason':'source directory does not exist','findings':[]}
@@ -102,4 +114,5 @@ class ResearchPipeline:
       if f.get('id')==c.get('finding_id'):
        ev=ex.get('evidence') or {};f['execution_evidence']=ev or {'returncode':ex.get('returncode'),'candidate_failed':ex.get('candidate_failed'),'stdout':ex.get('stdout','')[-12000:],'stderr':ex.get('stderr','')[-8000:]};f['reproducibility']=float(ev.get('reproducibility_score',0.0));f['status']=STATUS
   ranked=self.prioritizer.rank(ranked,opportunity)
-  return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'protocol_map':protocol_map,'attack_paths':attack_paths,'business_logic_hypotheses':hypotheses[:100],'tool_results':orchestration.get('stage1',{}).get('results',[]),'security_engine_orchestration':orchestration,'symbolic_validation':symbolic,'invariant_validation':invariants,'upgrade_surface':self.tools.upgrade_surface(source_dir),'triaged_findings':triaged_findings,'correlated_findings':ranked,'exploit_test_candidates':candidate_validation,'historical_search_leads':[self.history.search_urls(f.get('title',''),f.get('category','')) for f in ranked[:10]],'review_status':STATUS}
+  historical_context=self._historical_context(ranked)
+  return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'protocol_map':protocol_map,'attack_paths':attack_paths,'business_logic_hypotheses':hypotheses[:100],'tool_results':orchestration.get('stage1',{}).get('results',[]),'security_engine_orchestration':orchestration,'symbolic_validation':symbolic,'invariant_validation':invariants,'upgrade_surface':self.tools.upgrade_surface(source_dir),'triaged_findings':triaged_findings,'correlated_findings':ranked,'exploit_test_candidates':candidate_validation,'historical_intelligence':historical_context,'historical_search_leads':[self.history.search_urls(f.get('title',''),f.get('category','')) for f in ranked[:10]],'review_status':STATUS,'do_not_auto_submit':True}
