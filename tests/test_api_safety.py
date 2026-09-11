@@ -152,12 +152,9 @@ def test_every_protected_target_path_fails_closed_without_binding(monkeypatch):
         '/api/analyze-advanced',
         '/api/generate-human-review-report',
     ]
-    with app.test_request_context('/', method='POST'):
-        for path in protected_paths:
-            from flask import request
-            request.environ['PATH_INFO'] = path
-            request._cached_json = ({}, {})
-            _, error, status = main._protected('immunefi:fixture')
+    for path in protected_paths:
+        with app.test_request_context(path, method='POST', json={}):
+            _, error, status = main._protected('immunifi:fixture')
             assert error is not None, path
             assert status == 403, path
 
