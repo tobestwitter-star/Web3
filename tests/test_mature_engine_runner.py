@@ -40,6 +40,33 @@ def test_halmos_real_execution_and_json_provenance():
     assert isinstance(result["findings"], list)
 
 
+def test_ityfuzz_marks_real_bounded_execution(monkeypatch):
+    runner = MatureEngineRunner()
+    monkeypatch.setattr(
+        runner,
+        "inventory",
+        lambda: {"ityfuzz": {"available": True, "path": "/bin/ityfuzz"}},
+    )
+    monkeypatch.setattr(runner, "_version", lambda *args: "ityfuzz test")
+    monkeypatch.setattr(
+        runner,
+        "_run",
+        lambda *args, **kwargs: {
+            "status": "timeout",
+            "error": "execution exceeded 15s timeout",
+            "stdout": "EVM Fuzzer Start\nDeployed all contracts\nexecutions: 12345\n",
+            "stderr": "",
+            "returncode": None,
+            "command": ["ityfuzz", "evm"],
+            "cwd": str(FOUNDRY_FIXTURE),
+        },
+    )
+    result = runner.run_ityfuzz(str(FOUNDRY_FIXTURE), timeout=15)
+    assert result["status"] == "completed_bounded"
+    assert result["bounded_execution"] is True
+    assert result["execution"]["status"] == "timeout"
+
+
 def test_foundry_does_not_mutate_non_foundry_target(tmp_path):
     (tmp_path / "Example.sol").write_text("pragma solidity ^0.8.20; contract Example {}\n", encoding="utf-8")
     result = MatureEngineRunner().run_foundry(str(tmp_path), timeout=10)
