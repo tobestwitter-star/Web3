@@ -57,6 +57,10 @@ jobs:
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: python benchmarks/run_protocol_fixtures.py
+      - name: Run focused ItyFuzz reentrancy fixture
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: python benchmarks/run_ityfuzz_focused.py
       - name: Verify real engine evidence registry -> reproduction -> report path
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
