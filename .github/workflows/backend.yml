@@ -52,10 +52,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export ITYFUZZ_DIR="$RUNNER_TEMP/ityfuzz/bin"
-          mkdir -p "$ITYFUZZ_DIR"
           curl -fsSL -o "$RUNNER_TEMP/ityfuzz-installer.sh" https://ity.fuzz.land/
           bash "$RUNNER_TEMP/ityfuzz-installer.sh"
+          if [ -f "$HOME/.bashrc" ]; then source "$HOME/.bashrc" || true; fi
           if command -v ityfuzzup >/dev/null 2>&1; then
             ityfuzzup
           elif [ -x "$HOME/.ityfuzz/bin/ityfuzzup" ]; then
@@ -66,9 +65,10 @@ jobs:
             echo "ItyFuzz installation failed" >&2
             exit 1
           fi
-          install -m 0755 "$found" "$ITYFUZZ_DIR/ityfuzz"
-          echo "$ITYFUZZ_DIR" >> "$GITHUB_PATH"
-          "$ITYFUZZ_DIR/ityfuzz" --version
+          mkdir -p "$RUNNER_TEMP/ityfuzz/bin"
+          install -m 0755 "$found" "$RUNNER_TEMP/ityfuzz/bin/ityfuzz"
+          echo "$RUNNER_TEMP/ityfuzz/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/ityfuzz/bin/ityfuzz" --version
       - name: Install OSV-Scanner and Gitleaks
         shell: bash
         run: |
