@@ -55,16 +55,17 @@ class SecurityEngineOrchestrator:
    command=["osv-scanner","scan","source","-r",".","--format","json"] if name=="osv-scanner" else ["gitleaks","detect","--no-banner","--report-format","json","--report-path","-"];r=self._run(command,source_dir,timeout);findings=self._specialized_findings(name,r);results.append({"tool":name,"stage":1,"question":"dependencies" if name=="osv-scanner" else "secrets","result":r,"version":self._version(name,source_dir),"findings":findings,"evidence_provenance":{"engine":name,"version":self._version(name,source_dir),"command":r.get("command"),"cwd":r.get("cwd"),"stdout_sha256":r.get("stdout_sha256"),"stderr_sha256":r.get("stderr_sha256")},"review_status":STATUS})
   return {"stage":1,"selected":selected,"skipped":[n for n in (explicit or ("slither","forge","osv-scanner","gitleaks")) if n not in selected],"results":results,"resource_policy":{"timeout_seconds":min(int(timeout),180),"max_parallel":1}}
  def _score_engine(self,name,finding:Dict[str,Any],question:str,reachability:float=0.5,evidence:float=0.5)->float:
-  p=ENGINE_POLICY[name];text=" ".join(str(finding.get(k,"")) for k in ("title","description","category")).lower();score=0.0
-  score+=2.0 if question in p["questions"] else 0.0;score+=1.5*reachability;score+=1.5*evidence
-  if name=="ityfuzz" and any(x in text for x in ("reentr","oracle","state","accounting")):score+=2
-  if name=="halmos" and any(x in text for x in ("access","state","invariant","symbolic")):score+=2
-  if name in {"medusa","echidna"} and any(x in text for x in ("invariant","state","fuzz")):score+=1
+  p=ENGINE_POLICY[name];text=" ".join(str(finding.get(k,"")) for k in ("title","description","category")).lower();category=str(finding.get("category") or "").lower();score=0.0
+  score+=3.0 if question in p["questions"] else 0.0;score+=1.5*max(0,min(1,reachability));score+=1.5*max(0,min(1,evidence))
+  if category=="external_call" and name in {"ityfuzz","halmos"}:score+=2
+  if category in {"asset_flow","accounting","oracle"} and name=="ityfuzz":score+=2
+  if category in {"state_machine","privilege"} and name=="halmos":score+=2
+  if name in {"medusa","echidna"} and category in {"state_machine","invariant"}:score+=1
   return score
  def run_for_candidates(self,source_dir:str,findings:List[Dict[str,Any]],timeout:int=180)->Dict[str,Any]:
-  inventory={x["name"]:x for x in self.inventory()};candidates=sorted(findings or [],key=lambda f:float(f.get("priority",f.get("priority_score",0)) or 0),reverse=True)[:10];decisions=[]
+  inventory={x["name"]:x for x in self.inventory()};candidates=sorted(findings or [],key=lambda f:float(f.get("priority",f.get("priority_score",f.get("exploitability",0))) or 0),reverse=True)[:10];decisions=[]
   for finding in candidates:
-   question=self._question_for_finding(finding);reachability=float(finding.get("reachability",finding.get("reachability_score",0.5)) or 0.5);evidence=float(finding.get("confidence",finding.get("evidence_score",0.5)) or 0.5);eligible=[n for n in QUESTION_MAP.get(question,set()) if ENGINE_POLICY.get(n,{}).get("stage",9)>1 and inventory.get(n,{}).get("available")];ranked=sorted(eligible,key=lambda n:self._score_engine(n,finding,question,reachability,evidence),reverse=True);chosen=ranked[:1];evidence_runs=[]
+   question=self._question_for_finding(finding);reachability=float(finding.get("reachability",finding.get("reachability_score",finding.get("exploitability",0.5))) or 0.5);evidence=float(finding.get("confidence",finding.get("evidence_score",0.5)) or 0.5);eligible=[n for n in QUESTION_MAP.get(question,set()) if ENGINE_POLICY.get(n,{}).get("stage",9)>1 and inventory.get(n,{}).get("available")];ranked=sorted(eligible,key=lambda n:self._score_engine(n,finding,question,reachability,evidence),reverse=True);chosen=ranked[:1];evidence_runs=[]
    for name in chosen:
     if name=="halmos":result=self.core.run_halmos(source_dir,min(int(timeout),180))
     elif name=="ityfuzz":result=self.core.run_ityfuzz(source_dir,min(int(timeout),180))
@@ -73,9 +74,12 @@ class SecurityEngineOrchestrator:
      if not command:continue
      result=self._run(command,source_dir,min(int(timeout),180))
     evidence_runs.append({"tool":name,"stage":ENGINE_POLICY[name]["stage"],"question":question,"result":result,"review_status":STATUS})
-   decisions.append({"finding_id":finding.get("id"),"question":question,"reachability_score":reachability,"evidence_score":evidence,"ranked_engines":ranked,"selected_engines":chosen,"selection_reason":"finding class + reachability + evidence confidence + tool specialization + bounded cost; one heavyweight escalation per candidate","evidence":evidence_runs,"review_status":STATUS})
+   decisions.append({"finding_id":finding.get("id"),"question":question,"reachability_score":reachability,"evidence_score":evidence,"ranked_engines":ranked,"selected_engines":chosen,"selection_reason":"protocol-derived hypothesis category + reachability/exploitability + evidence confidence + tool specialization + bounded cost; one heavyweight escalation per candidate","evidence":evidence_runs,"review_status":STATUS})
   return {"stage":2,"decisions":decisions,"resource_policy":{"max_heavy_engines_per_candidate":1,"timeout_seconds":min(int(timeout),180)}}
  def _question_for_finding(self,finding:Dict[str,Any])->str:
+  category=str(finding.get("category") or "").lower()
+  category_map={"external_call":"reentrancy","asset_flow":"accounting","accounting":"accounting","oracle":"oracle","state_machine":"state_machine","privilege":"access_control","precision":"accounting","upgrade":"delegatecall","dependency_vulnerability":"dependencies","secret_exposure":"secrets"}
+  if category in category_map:return category_map[category]
   text=" ".join(str(finding.get(k,"")) for k in ("title","description","category")).lower()
   if any(x in text for x in ("reentr","callback")):return "reentrancy"
   if any(x in text for x in ("state machine","state transition","invariant")):return "state_machine"
