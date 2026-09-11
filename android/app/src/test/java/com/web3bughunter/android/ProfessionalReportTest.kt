@@ -1,6 +1,5 @@
 package com.web3bughunter.android
 
-import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -60,15 +59,13 @@ class ProfessionalReportTest {
     }
 
     @Test fun missingEvidenceIsDistinctFromDemonstratedEvidence() {
-        val finding = JSONObject("""{"finding_id":"f-3","reproduction":{"status":"not demonstrated","evidence":null}}""")
-        val report = JSONObject().put("findings", JSONArray().put(finding)).toProfessionalReport()
+        val report = JSONObject("""{"findings":[{"finding_id":"f-3","reproduction":{"status":"not demonstrated","evidence":null}}]}""").toProfessionalReport()
         assertFalse(report.hasDemonstratedEvidence(report.finding(0)!!))
         assertEquals("not demonstrated", report.finding(0)!!.getJSONObject("reproduction").getString("status"))
     }
 
     @Test fun malformedEvidenceDoesNotBecomeAnExecutionClaim() {
-        val finding = JSONObject("""{"finding_id":"f-4","reproduction":"malformed"}""")
-        val report = JSONObject().put("findings", JSONArray().put(finding)).toProfessionalReport()
+        val report = JSONObject("""{"findings":[{"finding_id":"f-4","reproduction":"malformed"}]}""").toProfessionalReport()
         assertFalse(report.hasDemonstratedEvidence(report.finding(0)!!))
         assertEquals("malformed", report.finding(0)!!.getString("reproduction"))
     }
