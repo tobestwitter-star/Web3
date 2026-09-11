@@ -60,12 +60,12 @@ class FindingCorrelator:
     check=str(raw.get('check') or raw.get('name') or raw.get('title') or raw.get('vulnerability') or '').strip().lower()
     if engine!='existing_analyzer' and check in self.TOOL_OBSERVATION_ONLY:continue
     f=self.normalize(raw,engine);match=next((m for m in merged if self._same_issue(m,f)),None)
-    if not match:
-     merged.append({**f,'engines':[f['engine']],'occurrences':1,'cross_tool_confidence':f['confidence'],'duplicate_classification':'no useful match','engine_observations':[{'engine':engine,'finding':f,'raw_evidence':raw.get('evidence',[]) if isinstance(raw,dict) else []}]})
+    observation={'engine':engine,'finding':f,'raw_evidence':raw.get('evidence',[]) if isinstance(raw,dict) else []}
+    if not match:merged.append({**f,'engines':[f['engine']],'occurrences':1,'cross_tool_confidence':f['confidence'],'duplicate_classification':'no useful match','engine_observations':[observation]})
     else:
      match['occurrences']+=1
      if f['engine'] not in match['engines']:match['engines'].append(f['engine'])
-     match['cross_tool_confidence']=min(1,max(match['cross_tool_confidence'],f['confidence'])+.12);match['evidence'].extend(f['evidence']);match['engine_observations'].append({'engine':engine,'finding':f,'raw_evidence':raw.get('evidence',[]) if isinstance(raw,dict) else []});match['duplicate_classification']='related multi-engine finding'
+     match['cross_tool_confidence']=min(1,max(match['cross_tool_confidence'],f['confidence'])+.12);match['evidence'].extend(f['evidence']);match['engine_observations'].append(observation);match['duplicate_classification']='related multi-engine finding'
      if self.SEVERITY.get(f['severity'],2)>self.SEVERITY.get(match['severity'],2):match['severity']=f['severity']
   result=[]
   for f in merged:
@@ -78,38 +78,33 @@ class ResearchPipeline:
  def _historical_context(self,findings):
   context=[]
   for finding in findings[:10]:
-   lookup=self.history.lookup(finding,['defi_hacklabs','github_code_search'],5)
-   finding['historical_intelligence']=lookup
-   finding['possible_duplicate_indicators']=lookup.get('matches',[])
-   finding['historical_context']= [{'source':m['reference'].get('source'),'reference':m['reference'].get('reference'),'similarity':m['similarity'],'match_type':m['match_type']} for m in lookup.get('matches',[])]
-   finding['duplicate_classification']=DUPLICATE if lookup.get('matches') else 'no historical match established'
-   finding['status']=STATUS
-   context.append(lookup)
+   lookup=self.history.lookup(finding,['defi_hacklabs','github_code_search'],5);finding['historical_intelligence']=lookup;finding['possible_duplicate_indicators']=lookup.get('matches',[]);finding['historical_context']=[{'source':m['reference'].get('source'),'reference':m['reference'].get('reference'),'similarity':m['similarity'],'match_type':m['match_type']} for m in lookup.get('matches',[])];finding['duplicate_classification']=DUPLICATE if lookup.get('matches') else 'no historical match established';finding['status']=STATUS;context.append(lookup)
   return context
  def _evidence_registry(self,ranked,candidate_validation,symbolic,invariants,orchestration,attack_paths,economic_by_id=None):
   registry={}
-  def entry(fid):return registry.setdefault(str(fid),{'engine_observations':[],'engine_provenance':[],'execution_metadata':[],'provenance':[],'conflicts':[]})
+  def entry(fid):
+   e=registry.setdefault(str(fid),{})
+   for key in ('engine_observations','engine_provenance','execution_metadata','provenance','conflicts'):
+    if not isinstance(e.get(key),list):e[key]=[]
+   return e
   for result in (orchestration.get('stage1',{}).get('results',[]) or []):
    engine=result.get('tool');prov=result.get('evidence_provenance') or {};execution=result.get('result') or result.get('execution') or {}
    for raw in result.get('findings',[]) or []:
     fid=raw.get('id')
     if not fid:continue
-    e=entry(fid);e['engine_observations'].append({'engine':engine,'finding':raw,'structured_result':result.get('integration',result.get('result'))});e['engine_provenance'].append(prov);e['execution_metadata'].append(execution);e['provenance'].append({'engine':engine,'version':result.get('version'),'command':prov.get('command'),'cwd':prov.get('cwd'),'stdout_sha256':prov.get('stdout_sha256'),'stderr_sha256':prov.get('stderr_sha256')})
+    e=entry(fid);e['engine_observations'].append({'engine':engine,'finding':raw,'structured_result':result.get('integration',result.get('result'))});e['engine_provenance'].append(prov);e['execution_metadata'].append(execution);e['provenance'].append({'engine':engine,'version':result.get('version') or prov.get('version'),'command':prov.get('command'),'cwd':prov.get('cwd'),'stdout_sha256':prov.get('stdout_sha256'),'stderr_sha256':prov.get('stderr_sha256')})
   by_candidate={str(c.get('finding_id')):c for c in (candidate_validation.get('candidates',[]) or [])}
   for f in ranked:
-   fid=str(f.get('id'));e=entry(fid)
-   for c in [by_candidate.get(fid)] if by_candidate.get(fid) else []:
-    for ex in c.get('execution',[]) or []:
-     e['engine_observations'].append({'engine':ex.get('tool','forge'),'type':'reproduction','structured_result':ex});e['execution_metadata'].append(ex);e['provenance'].append({'engine':ex.get('tool','forge'),'command':ex.get('command'),'cwd':ex.get('cwd'),'status':ex.get('status'),'evidence_status':(ex.get('evidence') or {}).get('status') if isinstance(ex.get('evidence'),dict) else None})
-     if isinstance(ex.get('evidence'),dict):e['reproduction']={**ex['evidence'],'execution_status':ex.get('status'),'returncode':ex.get('returncode'),'candidate_failed':ex.get('candidate_failed')}
+   fid=str(f.get('id'));e=entry(fid);candidate=by_candidate.get(fid)
+   if candidate:
+    for ex in candidate.get('execution',[]) or []:
+     tool=ex.get('tool','forge');ev=ex.get('evidence')
+     e['engine_observations'].append({'engine':tool,'type':'reproduction','structured_result':ex});e['execution_metadata'].append(ex);e['provenance'].append({'engine':tool,'command':ex.get('command'),'cwd':ex.get('cwd'),'status':ex.get('status'),'evidence_status':ev.get('status') if isinstance(ev,dict) else None})
+     if isinstance(ev,dict):e['reproduction']={**ev,'execution_status':ex.get('status'),'returncode':ex.get('returncode'),'candidate_failed':ex.get('candidate_failed')}
    if f.get('engine_observations'):e['engine_observations'].extend(f['engine_observations'])
    if f.get('evidence_provenance'):e['provenance'].extend(_as_list(f.get('evidence_provenance')))
-   e['attack_paths']=f.get('attack_paths') or []
-   e['economic_analysis']=f.get('economic_analysis')
-   e['historical_context']=f.get('historical_context') or []
-   # Preserve pipeline-level validation objects as structured evidence; do not claim they belong to a finding without an explicit candidate id.
-   e['symbolic']=symbolic
-   e['invariant']=invariants
+   e['attack_paths']=f.get('attack_paths') or [];e['economic_analysis']=f.get('economic_analysis');e['historical_context']=f.get('historical_context') or []
+   e['symbolic']=symbolic;e['invariant']=invariants
   return registry
  def analyze_local(self,source_dir,protocol_name,source_code=None,authorization_confirmed=False,tools=None,opportunity=None):
   if not authorization_confirmed:return {'status':'blocked','reason':'Explicit authorization confirmation is required before analysis/testing.','findings':[]}
@@ -131,17 +126,14 @@ class ResearchPipeline:
   for f in combined:
    exact=[p for p in attack_paths if p.get('entry_point','')==f'{f.get("contract","")}.{f.get("function","")}' or (f.get('function') and p.get('entry_point','').split('.')[-1]==str(f.get('function')))]
    f['attack_paths']=exact[:3];f['attack_path_uncertain']=not bool(exact);f['economic_analysis']=self.economics.analyze(f);f['status']=STATUS
-  ranked=self.prioritizer.rank(combined,opportunity)
-  candidate_validation=self.tools.generate_and_validate(source_dir,ranked[:10],True,180);symbolic=self.tools.run_symbolic(source_dir,180);invariants=self.tools.run_invariants(source_dir,180)
+  ranked=self.prioritizer.rank(combined,opportunity);candidate_validation=self.tools.generate_and_validate(source_dir,ranked[:10],True,180);symbolic=self.tools.run_symbolic(source_dir,180);invariants=self.tools.run_invariants(source_dir,180)
   for c in candidate_validation.get('candidates',[]):
    for ex in c.get('execution',[]):
     if ex.get('status')=='executed':
      for f in ranked:
       if f.get('id')==c.get('finding_id'):
        ev=ex.get('evidence') or {};f['execution_evidence']=ev or {'returncode':ex.get('returncode'),'candidate_failed':ex.get('candidate_failed'),'stdout':ex.get('stdout','')[-12000:],'stderr':ex.get('stderr','')[-8000:]};f['reproducibility']=float(ev.get('reproducibility_score',0.0));f['status']=STATUS
-  ranked=self.prioritizer.rank(ranked,opportunity)
-  historical_context=self._historical_context(ranked)
-  registry=self._evidence_registry(ranked,candidate_validation,symbolic,invariants,orchestration,attack_paths)
+  ranked=self.prioritizer.rank(ranked,opportunity);historical_context=self._historical_context(ranked);registry=self._evidence_registry(ranked,candidate_validation,symbolic,invariants,orchestration,attack_paths)
   return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'protocol_map':protocol_map,'attack_paths':attack_paths,'business_logic_hypotheses':hypotheses[:100],'tool_results':orchestration.get('stage1',{}).get('results',[]),'security_engine_orchestration':orchestration,'symbolic_validation':symbolic,'invariant_validation':invariants,'upgrade_surface':self.tools.upgrade_surface(source_dir),'triaged_findings':triaged_findings,'correlated_findings':ranked,'exploit_test_candidates':candidate_validation,'evidence_registry':registry,'historical_intelligence':historical_context,'historical_search_leads':[self.history.search_urls(f.get('title',''),f.get('category','')) for f in ranked[:10]],'review_status':STATUS,'do_not_auto_submit':True}
 
 def _as_list(value):
