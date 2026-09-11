@@ -1,64 +1,79 @@
 package com.web3bughunter.android
 
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 
 class ProfessionalReportTest {
-    private fun report(json: String): ProfessionalReport = JSONObject(json.trimIndent()).toProfessionalReport()
+    private fun finding(): JSONObject = JSONObject().apply {
+        put("finding_id", "f-1")
+        put("severity", "high")
+        put("confidence", 0.91)
+        put("engine_evidence", JSONArray().apply { put(JSONObject().put("engine", "slither")); put(JSONObject().put("engine", "forge")) })
+        put("engine_provenance", JSONArray().apply { put(JSONObject().put("engine", "forge").put("version", "1.0").put("command", "forge test")) })
+        put("execution_metadata", JSONArray().apply { put(JSONObject().put("status", "executed").put("returncode", 0)) })
+        put("reproduction", JSONObject().put("status", "demonstrated").put("trace", "call trace"))
+        put("traces_inputs_coverage_symbolic", JSONObject().put("coverage", JSONObject().put("lines", 42)).put("symbolic", JSONObject().put("status", "executed")).put("invariants", JSONObject().put("status", "executed")))
+        put("evidence_provenance", JSONArray().apply { put(JSONObject().put("engine", "forge").put("sha256", "abc")) })
+        put("historical_context", JSONArray().apply { put(JSONObject().put("match_type", "semantic_similarity_lead")) })
+        put("economic_impact", JSONObject().put("estimated_loss_usd", 125000))
+        put("remediation", "Update state before external interaction.")
+        put("limitations", JSONArray().apply { put("Requires human reproduction") })
+    }
 
     @Test fun completeStructuredReportPreservesAuthoritativeFields() {
-        val parsed = report("""
-            {"review_status":"unverified","do_not_auto_submit":true,"human_review_only":true,"findings":[{"finding_id":"f-1","severity":"high","confidence":0.91,"engine_evidence":[{"engine":"slither"},{"engine":"forge"}],"engine_provenance":[{"engine":"forge","version":"1.0","command":"forge test"}],"execution_metadata":[{"status":"executed","returncode":0}],"reproduction":{"status":"demonstrated"},"evidence_provenance":[{"engine":"forge","sha256":"abc"}],"historical_context":[{"match_type":"semantic_similarity_lead"}],"economic_impact":{"estimated_loss_usd":125000},"remediation":"Update state before external interaction.","limitations":["Requires human reproduction"]}]}
-        """)
-        parsed.raw.put("review_status", REPORT_REVIEW_STATUS)
-        parsed.finding(0)!!.put("review_status", REPORT_REVIEW_STATUS).put("duplicate_status", REPORT_DUPLICATE_STATUS)
+        val f = finding().put("review_status", REPORT_REVIEW_STATUS).put("duplicate_status", REPORT_DUPLICATE_STATUS)
+        val parsed = ProfessionalReport(JSONObject().put("review_status", REPORT_REVIEW_STATUS).put("do_not_auto_submit", true).put("human_review_only", true).put("findings", JSONArray().put(f)))
         assertEquals(REPORT_REVIEW_STATUS, parsed.reviewStatus)
         assertTrue(parsed.doNotAutoSubmit)
         assertTrue(parsed.humanReviewOnly)
-        val finding = parsed.finding(0)!!
-        assertEquals("high", finding.getString("severity"))
-        assertEquals(REPORT_DUPLICATE_STATUS, parsed.duplicateStatus(finding))
-        assertEquals(2, finding.getJSONArray("engine_evidence").length())
-        assertEquals("forge", finding.getJSONArray("engine_provenance").getJSONObject(0).getString("engine"))
-        assertTrue(parsed.hasDemonstratedEvidence(finding))
-        assertEquals("abc", finding.getJSONArray("evidence_provenance").getJSONObject(0).getString("sha256"))
-        assertEquals("semantic_similarity_lead", finding.getJSONArray("historical_context").getJSONObject(0).getString("match_type"))
-        assertEquals(125000, finding.getJSONObject("economic_impact").getInt("estimated_loss_usd"))
+        assertEquals(1, parsed.findings.length())
+        assertEquals("high", parsed.finding(0)!!.getString("severity"))
+        assertEquals(REPORT_DUPLICATE_STATUS, parsed.duplicateStatus(parsed.finding(0)!!))
+        assertEquals(2, parsed.finding(0)!!.getJSONArray("engine_evidence").length())
+        assertEquals("forge", parsed.finding(0)!!.getJSONArray("engine_provenance").getJSONObject(0).getString("engine"))
+        assertTrue(parsed.hasDemonstratedEvidence(parsed.finding(0)!!))
+        assertEquals("abc", parsed.finding(0)!!.getJSONArray("evidence_provenance").getJSONObject(0).getString("sha256"))
+        assertEquals("semantic_similarity_lead", parsed.finding(0)!!.getJSONArray("historical_context").getJSONObject(0).getString("match_type"))
+        assertEquals(125000, parsed.finding(0)!!.getJSONObject("economic_impact").getInt("estimated_loss_usd"))
     }
 
     @Test fun reproductionSymbolicInvariantAndProvenanceRemainStructured() {
-        val parsed = report("""
-            {"findings":[{"reproduction":{"status":"demonstrated","trace":"call trace","inputs":{"amount":1}},"traces_inputs_coverage_symbolic":{"trace":"call trace","inputs":{"amount":1},"coverage":{"lines":42},"symbolic":{"status":"executed"},"invariants":{"status":"executed"}},"evidence_provenance":[{"engine":"halmos","version":"1.0","command":"halmos"}]}]}
-        """)
-        val finding = parsed.finding(0)!!
-        assertEquals("demonstrated", finding.getJSONObject("reproduction").getString("status"))
-        assertEquals("call trace", finding.getJSONObject("reproduction").getString("trace"))
-        assertEquals(42, finding.getJSONObject("traces_inputs_coverage_symbolic").getJSONObject("coverage").getInt("lines"))
-        assertEquals("executed", finding.getJSONObject("traces_inputs_coverage_symbolic").getJSONObject("symbolic").getString("status"))
-        assertEquals("executed", finding.getJSONObject("traces_inputs_coverage_symbolic").getJSONObject("invariants").getString("status"))
-        assertEquals("halmos", finding.getJSONArray("evidence_provenance").getJSONObject(0).getString("engine"))
+        val parsed = ProfessionalReport(JSONObject().put("findings", JSONArray().put(finding())))
+        val f = parsed.finding(0)!!
+        assertEquals("demonstrated", f.getJSONObject("reproduction").getString("status"))
+        assertEquals("call trace", f.getJSONObject("reproduction").getString("trace"))
+        assertEquals(42, f.getJSONObject("traces_inputs_coverage_symbolic").getJSONObject("coverage").getInt("lines"))
+        assertEquals("executed", f.getJSONObject("traces_inputs_coverage_symbolic").getJSONObject("symbolic").getString("status"))
+        assertEquals("executed", f.getJSONObject("traces_inputs_coverage_symbolic").getJSONObject("invariants").getString("status"))
+        assertEquals("forge", f.getJSONArray("evidence_provenance").getJSONObject(0).getString("engine"))
     }
 
     @Test fun unknownFieldsAndPartialReportsRemainForwardCompatible() {
-        val parsed = report("""{"review_status":"unverified","future_field":{"value":true},"findings":[{"finding_id":"f-2","unknown_engine_field":"preserve raw JSON"}]}""")
-        parsed.raw.put("review_status", REPORT_REVIEW_STATUS)
+        val f = JSONObject().put("finding_id", "f-2").put("unknown_engine_field", "preserve raw JSON")
+        val parsed = ProfessionalReport(JSONObject().put("review_status", REPORT_REVIEW_STATUS).put("future_field", JSONObject().put("value", true)).put("findings", JSONArray().put(f)))
         assertEquals(REPORT_REVIEW_STATUS, parsed.reviewStatus)
         assertEquals("preserve raw JSON", parsed.finding(0)!!.getString("unknown_engine_field"))
         assertFalse(parsed.hasDemonstratedEvidence(parsed.finding(0)!!))
     }
 
     @Test fun missingEvidenceIsDistinctFromDemonstratedEvidence() {
-        val parsed = report("""{"findings":[{"finding_id":"f-3","reproduction":{"status":"not demonstrated"}}]}""")
-        val finding = parsed.finding(0)!!
-        assertFalse(parsed.hasDemonstratedEvidence(finding))
-        assertEquals("not demonstrated", finding.getJSONObject("reproduction").getString("status"))
+        val f = JSONObject().put("finding_id", "f-3").put("reproduction", JSONObject().put("status", "not demonstrated"))
+        val parsed = ProfessionalReport(JSONObject().put("findings", JSONArray().put(f)))
+        assertFalse(parsed.hasDemonstratedEvidence(parsed.finding(0)!!))
+        assertEquals("not demonstrated", parsed.finding(0)!!.getJSONObject("reproduction").getString("status"))
     }
 
     @Test fun malformedEvidenceDoesNotBecomeAnExecutionClaim() {
-        val parsed = report("""{"findings":[{"finding_id":"f-4","reproduction":"malformed"}]}""")
-        val finding = parsed.finding(0)!!
-        assertFalse(parsed.hasDemonstratedEvidence(finding))
-        assertEquals("malformed", finding.getString("reproduction"))
+        val f = JSONObject().put("finding_id", "f-4").put("reproduction", "malformed")
+        val parsed = ProfessionalReport(JSONObject().put("findings", JSONArray().put(f)))
+        assertFalse(parsed.hasDemonstratedEvidence(parsed.finding(0)!!))
+        assertEquals("malformed", parsed.finding(0)!!.getString("reproduction"))
+    }
+
+    @Test fun reviewPolicyConstantsAreImmutableContractValues() {
+        assertEquals("UNVERIFIED — HUMAN REVIEW REQUIRED", REPORT_REVIEW_STATUS)
+        assertEquals("POSSIBLE DUPLICATE — HUMAN REVIEW REQUIRED", REPORT_DUPLICATE_STATUS)
     }
 }
