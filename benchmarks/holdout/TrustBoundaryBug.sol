@@ -3,5 +3,6 @@ interface IAuthority { function approved(address) external view returns(bool); }
 contract TrustBoundaryBug {
  IAuthority public authority;
  mapping(address=>uint256) public credit;
+ function setAuthority(address next) external { authority=IAuthority(next); }
  function mint(uint256 amount) external { require(authority.approved(msg.sender)); credit[msg.sender]+=amount; }
 }
