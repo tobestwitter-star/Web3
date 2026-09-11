@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "authorization": "isolated_local_holdout",
   "fixtures": [
     {"name":"VaultCallback","file":"VaultCallback.sol","expected":["reentrancy","callback","external_call"],"safe":false},
@@ -17,6 +17,7 @@
     {"name":"ProxyInitSequence","file":"ProxyInitSequence.sol","expected":["initialization"],"safe":false},
     {"name":"CallbackIntermediate","file":"CallbackIntermediate.sol","expected":["callback"],"safe":false},
     {"name":"CapitalPrerequisite","file":"CapitalPrerequisite.sol","expected":["flash_loan"],"safe":false},
+    {"name":"CrossContractTrustBug","file":"CrossContractTrustBug.sol","expected":["access_control"],"safe":false},
     {"name":"CallbackGuarded","file":"CallbackGuarded.sol","expected":[],"safe":true},
     {"name":"RoleInherited","file":"RoleInherited.sol","expected":[],"safe":true},
     {"name":"TypedPermitSafe","file":"TypedPermitSafe.sol","expected":[],"safe":true},
