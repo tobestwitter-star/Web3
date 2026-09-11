@@ -154,7 +154,7 @@ def test_every_protected_target_path_fails_closed_without_binding(monkeypatch):
     ]
     for path in protected_paths:
         with app.test_request_context(path, method='POST', json={}):
-            _, error, status = main._protected('immunifi:fixture')
+            _, error, status = main._protected('immunefi:fixture')
             assert error is not None, path
             assert status == 403, path
 
