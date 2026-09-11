@@ -22,7 +22,7 @@ class SemanticDataflow:
         s=head+' '+body
         return bool(re.search(r'\b(?:initializer|reinitializer|onlyInitializing|_disableInitializers|once)\b',s,re.I) or re.search(r'\b(?:initialized|ready|setupDone)\b\s*(?:==|!=)\s*(?:false|0)\b',body,re.I) or re.search(r'\brequire\s*\([^;\n]{0,160}!\s*(?:initialized|ready|setupDone)\b',body,re.I))
     def _state_write(self,b):
-        return re.search(r'\b(?:balance|balances|pending|shares|debt|state|status|phase|mode|owner|admin|controller|governor|implementation|logic|total|reserve|cash|credits|quota|nonce)\w*(?:\s*\[[^\]]+\])?\s*(?:=|\+=|-=|\*=|\+\+|--)',b,re.I)
+        return re.search(r'\b(?:balance|balances|pending|shares|debt|credit|credits|state|status|phase|mode|owner|admin|controller|governor|implementation|logic|total|reserve|cash|quota|nonce)\w*(?:\s*\[[^\]]+\])?\s*(?:=|\+=|-=|\*=|\+\+|--)',b,re.I)
     def analyze(self,code,name='target'):
         fs=[];funcs=self._functions(code);interfaces={};iface_vars={}
         for im in re.finditer(r'interface\s+(\w+)\s*\{(.*?)\}',code,re.I|re.S):
@@ -53,22 +53,31 @@ class SemanticDataflow:
             if (privileged_write or sensitive) and not init_guarded and not self._auth(h,b):
                 ev=b[:1700];extra=' This mutation also crosses an upgrade boundary.' if re.search(r'\b(?:implementation|logic|upgrader)\b\s*=',b,re.I) or re.search(r'\b(?:implementation|logic)\b',code,re.I) else ''
                 fs += [self._finding('access_control','Sensitive privilege mutation lacks authorization','high',code,m.start(),'A privileged/value-bearing mutation is reachable without an observed authorization guard.'+extra,ev,.84),self._finding('privilege','Potential unauthorized privilege escalation','high',code,m.start(),'Caller control appears able to reach a privileged state mutation without an observed authorization invariant.'+extra,ev,.82)]
+        authority_vars=[v for v in iface_vars if re.search(r'authority|auth|guardian|validator|gate',v,re.I)]
+        if authority_vars:
+            for m,n,a,h,b in funcs:
+                if n in {'authorityCheck','isAuthorized','isApproved','checkAuthority'}: continue
+                if self._state_write(b) and not self._auth(h,b) and not any(re.search(r'\b'+re.escape(v)+r'\s*\.',b,re.I) for v in authority_vars):
+                    ev=b[:1800];fs.append(self._finding('access_control','Cross-contract authorization check is not enforced on the state-changing path','high',code,m.start(),'An authority-like external contract is queried only outside the sensitive mutation path; the state-changing function does not enforce the cross-contract authorization invariant.',ev,.86))
         for m,n,a,h,b in funcs:
             if not re.search(r'\b(?:state|status|phase|mode)\w*\s*=',b,re.I): continue
             guarded=bool(re.search(r'\brequire\s*\([^;\n]{0,260}\b(?:state|status|phase|mode|msg\.sender|owner|governor|admin)\b',b,re.I) or self._auth(h,b))
             if not guarded:
+                sentinel_unreachable=bool(re.search(r'\brequire\s*\(\s*(?:state|status|phase|mode)\w*\s*==\s*type\s*\(\s*uint256\s*\)\.max\s*\)',b,re.I) and sum(bool(re.search(r'\b(?:state|status|phase|mode)\w*\s*=',fb,re.I)) for _,_,_,_,fb in funcs)==1)
+                if sentinel_unreachable: continue
                 pos=m.start()+max(0,b.find('state') if 'state' in b else b.find('phase'));fs += [self._finding('state_machine','Unrestricted state-machine transition','high',code,m.start(),'A public state transition lacks an observed predecessor-state or authorization check, allowing callers to select a security-sensitive phase; this is also a business logic invariant failure.',b,.82),self._finding('business_logic','Business logic invariant failure','high',code,pos,'A business logic invariant is missing from a security-sensitive state transition; the caller can move the protocol into a new phase without proving the required authorization or predecessor state.',b,.78)]
         for m,n,a,h,b in funcs:
-            oracle_call=re.search(r'\b(?:getPrice|latestAnswer|latestRoundData|read|consult|spotPrice|twap)\s*\(',b,re.I)
+            oracle_call=re.search(r'\b(?:getPrice|latest|latestAnswer|latestRoundData|read|consult|spotPrice|twap)\s*\(',b,re.I)
             if not oracle_call: continue
-            assigned=re.search(r'\b(?:uint\w*\s+)?(\w+)\s*=\s*\w+\.(?:getPrice|latestAnswer|read|spotPrice|twap)\s*\(',b,re.I)
+            assigned=re.search(r'\b(?:uint\w*\s+)?(\w+)\s*=\s*\w+\.(?:getPrice|latest|latestAnswer|latestRoundData|read|consult|spotPrice|twap)\s*\(',b,re.I)
             value_use=bool(re.search(r'\b(?:price|answer)\b[^;\n]{0,160}[*/]|[*/][^;\n]{0,160}\b(?:price|answer)\b',b,re.I) or (assigned and re.search(r'\b'+re.escape(assigned.group(1))+r'\b[\s\S]{0,400}[*/]',b,re.I)))
             validated=bool(re.search(r'\b(?:updated|answered|round|stale|heartbeat|twap|timeWeighted)\b',b,re.I) and re.search(r'\brequire\s*\([^;\n]{0,260}\b(?:answer|updated|round|answered|stale)\b',b,re.I))
             if value_use and not validated: fs.append(self._finding('oracle_attack','Unchecked oracle input influences protocol value','critical',code,m.start(),'An externally sourced price influences a security-sensitive value calculation without an observed freshness, round-consistency, or sanity check.',b,.84))
         for m,n,a,h,b in funcs:
             for dm in re.finditer(r'\b(\w+)\s*=\s*([^;\n]*?/[^;\n]+)',b,re.I):
                 expr=dm.group(2)
-                if '*' not in expr.split('/')[0] and re.search(r'\b(?:amount|value|units|shares|rate|price)\b',expr,re.I): fs.append(self._finding('precision','Potential truncation before value scaling','medium',code,m.start(),'A value is divided before an observed compensating multiplication, creating a potential precision-loss surface that needs boundary-value reproduction.',expr,.76));break
+                if ('*' in expr.split('/')[0] or re.search(r'\b(?:amount|value|units|shares|rate|price|totalShares|assets)\b',expr,re.I)):
+                    fs.append(self._finding('precision','Potential truncation before value scaling','medium',code,m.start(),'A value is divided after a value-bearing multiplication, creating a potential precision-loss surface that needs boundary-value reproduction.',expr,.78));break
             for cm in re.finditer(r'\b[\w\[\].]+\s*(?:\+=|-=)\s*[^;\n]*/\s*\d+',b,re.I):
                 fs.append(self._finding('precision','Precision loss in compound value conversion','medium',code,m.start()+cm.start(),'A value-bearing compound assignment performs integer division directly, creating truncation risk that should be reproduced at boundary values.',cm.group(0),.8));break
             ratio_assign=re.search(r'\b(?:uint\w*\s+)?(payout|out|payment|amountOut)\s*=\s*\w+\s*\*\s*(\d+)\s*/\s*(\d+)\s*;',b,re.I)
@@ -79,8 +88,7 @@ class SemanticDataflow:
                 pay=tm.group(1)
                 for sm in re.finditer(r'\b(\w+)\s*-\=\s*([^;]+);',b,re.I):
                     expr=re.sub(r'\s+','',sm.group(2))
-                    if expr and expr!=pay:
-                        fs.append(self._finding('accounting','State debit differs from transferred amount','high',code,m.start(),'A recorded balance/reserve debit differs from the amount actually transferred on the same path.',b,.86));break
+                    if expr and expr!=pay: fs.append(self._finding('accounting','State debit differs from transferred amount','high',code,m.start(),'A recorded balance/reserve debit differs from the amount actually transferred on the same path.',b,.86));break
         for m in re.finditer(r'\bdelegatecall\s*\(',code,re.I):
             fn=None
             for fm,nn,aa,hh,bb in funcs:
