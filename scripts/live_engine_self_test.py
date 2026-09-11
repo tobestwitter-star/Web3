@@ -17,15 +17,17 @@ def main() -> int:
     orchestrator = SecurityEngineOrchestrator()
     inventory = {item["name"]: item for item in orchestrator.inventory()}
     required = {name: inventory.get(name, {}) for name in ("forge", "slither", "halmos")}
+    advisory = {name: inventory.get(name, {}) for name in ("osv-scanner", "gitleaks")}
     missing = [name for name, meta in required.items() if not meta.get("available")]
     if missing:
         print(json.dumps({"status": "failed", "missing": missing, "inventory": required}, sort_keys=True), flush=True)
         return 1
-    stage1 = orchestrator.run_stage1(str(FIXTURE), timeout=60, explicit=["slither", "forge"])
+    stage1 = orchestrator.run_stage1(str(FIXTURE), timeout=60, explicit=["slither", "forge", "osv-scanner", "gitleaks"])
     halmos = orchestrator.core.run_halmos(str(FIXTURE), timeout=60)
-    payload = {"status": "completed", "inventory": required, "stage1": stage1, "halmos": halmos}
+    payload = {"status": "completed", "inventory": {**required, **advisory}, "stage1": stage1, "halmos": halmos}
     print(json.dumps(payload, sort_keys=True, default=str), flush=True)
-    if any(item.get("integration", {}).get("status") not in {"completed", "completed_with_findings"} for item in stage1["results"]):
+    allowed_stage1 = {"completed", "completed_with_findings"}
+    if any(item.get("integration", {}).get("status") not in allowed_stage1 and item.get("result", {}).get("status") not in allowed_stage1 for item in stage1["results"]):
         return 1
     if halmos.get("status") not in {"completed", "failed"}:
         return 1
