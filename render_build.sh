@@ -5,8 +5,9 @@ python -m pip install -r requirements.txt
 
 export FOUNDRY_DIR="$PWD/.render-foundry"
 export TOOLS_DIR="$PWD/.render-tools/bin"
-export PATH="$FOUNDRY_DIR/bin:$TOOLS_DIR:$HOME/.local/bin:$PATH"
-mkdir -p "$FOUNDRY_DIR/bin" "$TOOLS_DIR"
+export ITYFUZZ_DIR="$PWD/.render-ityfuzz"
+export PATH="$FOUNDRY_DIR/bin:$TOOLS_DIR:$ITYFUZZ_DIR/bin:$HOME/.local/bin:$PATH"
+mkdir -p "$FOUNDRY_DIR/bin" "$TOOLS_DIR" "$ITYFUZZ_DIR/bin"
 
 # foundryup-init honors the project-local install location on Render's Python image.
 if [ ! -x "$FOUNDRY_DIR/bin/forge" ]; then
@@ -25,6 +26,30 @@ fi
 
 if [ ! -x "$FOUNDRY_DIR/bin/forge" ]; then
   echo "Foundry installation failed; forge is required for execution-backed analysis" >&2
+  exit 1
+fi
+
+install_ityfuzz() {
+  if command -v ityfuzz >/dev/null 2>&1; then return 0; fi
+  local installer="$TOOLS_DIR/ityfuzz-installer.sh"
+  curl -fsSL -o "$installer" https://ity.fuzz.land/
+  bash "$installer"
+  rm -f "$installer"
+  if [ -x "$HOME/.ityfuzz/bin/ityfuzz" ]; then
+    cp -f "$HOME/.ityfuzz/bin/ityfuzz" "$ITYFUZZ_DIR/bin/ityfuzz"
+  elif [ -x "$HOME/.local/bin/ityfuzz" ]; then
+    cp -f "$HOME/.local/bin/ityfuzz" "$ITYFUZZ_DIR/bin/ityfuzz"
+  elif command -v ityfuzz >/dev/null 2>&1; then
+    cp -f "$(command -v ityfuzz)" "$ITYFUZZ_DIR/bin/ityfuzz"
+  else
+    found="$(find "$HOME" -type f -name ityfuzz -perm -u+x 2>/dev/null | head -n 1 || true)"
+    if [ -n "$found" ]; then cp -f "$found" "$ITYFUZZ_DIR/bin/ityfuzz"; fi
+  fi
+}
+
+install_ityfuzz
+if [ ! -x "$ITYFUZZ_DIR/bin/ityfuzz" ]; then
+  echo "ItyFuzz installation failed; real fuzzing integration is required" >&2
   exit 1
 fi
 
@@ -66,6 +91,8 @@ command -v slither
 slither --version
 command -v halmos
 halmos --version
+command -v ityfuzz
+ityfuzz --version
 command -v osv-scanner
 osv-scanner --version
 command -v gitleaks
