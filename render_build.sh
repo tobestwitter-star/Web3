@@ -28,14 +28,17 @@ if [ ! -x "$FOUNDRY_DIR/bin/forge" ]; then
 fi
 
 install_ityfuzz() {
-  if command -v ityfuzz >/dev/null 2>&1; then return 0; fi
+  if [ -x "$ITYFUZZ_DIR/bin/ityfuzz" ]; then return 0; fi
+  if command -v ityfuzz >/dev/null 2>&1; then
+    resolved="$(command -v ityfuzz)"
+    if [ "$resolved" != "$ITYFUZZ_DIR/bin/ityfuzz" ]; then cp -f "$resolved" "$ITYFUZZ_DIR/bin/ityfuzz"; fi
+    return 0
+  fi
   local installer="$TOOLS_DIR/ityfuzz-installer.sh"
   curl -fsSL -o "$installer" https://ity.fuzz.land/
   bash "$installer"
   rm -f "$installer"
 
-  # The official installer installs ityfuzzup and adds it to the user's shell profile.
-  # Source that profile explicitly because Render executes this build non-interactively.
   if [ -f "$HOME/.bashrc" ]; then
     # shellcheck disable=SC1090
     source "$HOME/.bashrc" || true
@@ -55,10 +58,11 @@ install_ityfuzz() {
   elif [ -x "$HOME/.local/bin/ityfuzz" ]; then
     cp -f "$HOME/.local/bin/ityfuzz" "$ITYFUZZ_DIR/bin/ityfuzz"
   elif command -v ityfuzz >/dev/null 2>&1; then
-    cp -f "$(command -v ityfuzz)" "$ITYFUZZ_DIR/bin/ityfuzz"
+    resolved="$(command -v ityfuzz)"
+    if [ "$resolved" != "$ITYFUZZ_DIR/bin/ityfuzz" ]; then cp -f "$resolved" "$ITYFUZZ_DIR/bin/ityfuzz"; fi
   else
     found="$(find "$HOME" /opt/render -type f -name ityfuzz -perm -u+x 2>/dev/null | head -n 1 || true)"
-    if [ -n "$found" ]; then cp -f "$found" "$ITYFUZZ_DIR/bin/ityfuzz"; fi
+    if [ -n "$found" ] && [ "$found" != "$ITYFUZZ_DIR/bin/ityfuzz" ]; then cp -f "$found" "$ITYFUZZ_DIR/bin/ityfuzz"; fi
   fi
 }
 
