@@ -26,15 +26,15 @@ def _state_transition_is_constrained(finding,source_code):
 
 def _callback_claim_has_real_external_call(finding,source_code):
     if not source_code or 'callback' not in str(finding.get('title') or '').lower(): return True
-    return bool(re.search(r'\.(?:call|send|transfer)\s*\(|\b(?:call|send|transfer)\s*\(|\bI[A-Za-z_$][\w$]*\s*\(',source_code,re.I))
+    return bool(re.search(r'\.(?:call|send|transfer)\s*\(|\b(?:call|send|transfer)\s*\(|\bI[A-Za-z_$][\w$]*\s*\([^;]*\)\s*\.',source_code,re.I))
 
 def _flash_loan_has_asset_boundary(finding,source_code):
     if not source_code or 'flash loan' not in str(finding.get('title') or '').lower(): return True
-    return bool(re.search(r'\.(?:call|send|transfer)\s*\(|\b(?:transfer|send|call)\s*\(',source_code,re.I))
+    return bool(re.search(r'\.(?:call|send|transfer)\s*\(|\b(?:transfer|send|call)\s*\(|\bI[A-Za-z_$][\w$]*\s*\([^;]*\)\s*\.',source_code,re.I))
 
 def _precision_is_exact(finding,source_code):
-    if not source_code or 'precision' not in str(finding.get('category') or '').lower() and 'precision' not in str(finding.get('title') or '').lower(): return False
-    return bool(re.search(r'\b\w+\s*\*\s*(\d+)\s*/\s*\1\b',source_code))
+    if not source_code or ('precision' not in str(finding.get('category') or '').lower() and 'precision' not in str(finding.get('title') or '').lower()): return False
+    return bool(re.search(r'\b\w+\s*\*\s*(\d+(?:e\d+)?)\s*/\s*\1\b',source_code,re.I))
 
 def triage_finding(finding,source_code=None):
     out=dict(finding);attr=out.get('source_attribution') or {};mutability=attr.get('mutability');title=str(out.get('title') or '').lower();desc=str(out.get('description') or '').lower();claim=f'{title} {desc}'
