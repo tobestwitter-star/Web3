@@ -7,12 +7,16 @@ on:
       - 'requirements.txt'
       - '.github/workflows/backend.yml'
       - 'benchmarks/engine_fixture/**'
+      - 'benchmarks/slither_fixture/**'
+      - 'render_start.sh'
   pull_request:
     paths:
       - '**.py'
       - 'requirements.txt'
       - '.github/workflows/backend.yml'
       - 'benchmarks/engine_fixture/**'
+      - 'benchmarks/slither_fixture/**'
+      - 'render_start.sh'
   workflow_dispatch:
 
 jobs:
@@ -43,6 +47,8 @@ jobs:
           halmos --version
       - name: Compile Python sources
         run: python -m compileall -q .
+      - name: Run production engine self-test
+        run: python scripts/live_engine_self_test.py
       - name: Run tests
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
