@@ -57,6 +57,10 @@ jobs:
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: python benchmarks/run_protocol_fixtures.py
+      - name: Verify real engine evidence registry -> reproduction -> report path
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: python benchmarks/verify_real_engine_evidence.py
       - name: Upload benchmark report
         if: always()
         uses: actions/upload-artifact@v4
