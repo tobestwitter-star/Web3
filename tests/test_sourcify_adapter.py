@@ -1,4 +1,5 @@
 import json
+from urllib.error import HTTPError
 from sourcify_adapter import SourcifyAdapter
 
 
@@ -10,13 +11,8 @@ def test_sourcify_inventory_is_read_only():
 
 
 def test_sourcify_lookup_normalizes_http_error(monkeypatch):
-    class FakeHTTPError:
-        code = 404
-        def read(self):
-            return json.dumps({"error": "not found"}).encode()
-
     def fail(*args, **kwargs):
-        raise FakeHTTPError()
+        raise HTTPError("https://sourcify.dev/server/v2/contract/1/0x0", 404, "not found", {}, None)
 
     monkeypatch.setattr("sourcify_adapter.urlopen", fail)
     result = SourcifyAdapter().lookup("1", "0x0000000000000000000000000000000000000001")
