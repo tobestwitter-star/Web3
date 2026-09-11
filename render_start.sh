@@ -10,5 +10,5 @@ command -v halmos
 command -v ityfuzz
 command -v osv-scanner
 command -v gitleaks
-python scripts/live_engine_self_test.py 2>&1 | tee /tmp/live_engine_self_test.log &
+nohup python -u scripts/live_engine_self_test.py >/proc/1/fd/1 2>/proc/1/fd/2 </dev/null &
 exec gunicorn --bind 0.0.0.0:"${PORT}" --workers 1 --threads 4 --timeout 120 main:app
