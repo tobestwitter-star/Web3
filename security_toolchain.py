@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json, os, re, shutil, subprocess
 from pathlib import Path
-TOOLS={'slither':{'binary':'slither','kind':'static','license':'AGPL-3.0-or-later','project':'crytic/slither'},'aderyn':{'binary':'aderyn','kind':'static','license':'GPL-3.0','project':'Cyfrin/aderyn'},'forge':{'binary':'forge','kind':'test-fuzz','license':'Apache-2.0 OR MIT','project':'foundry-rs/foundry'},'echidna':{'binary':'echidna-test','kind':'property-fuzz','license':'AGPL-3.0','project':'crytic/echidna'},'medusa':{'binary':'medusa','kind':'coverage-guided-fuzz','license':'AGPL-3.0','project':'crytic/medusa'},'wake':{'binary':'wake','kind':'static-fuzz-framework','license':'ISC','project':'Ackee-Blockchain/wake'},'halmos':{'binary':'halmos','kind':'symbolic-testing','license':'AGPL-3.0','project':'a16z/halmos'}}
+TOOLS={'slither':{'binary':'slither','kind':'static','license':'AGPL-3.0-or-later','project':'crytic/slither'},'aderyn':{'binary':'aderyn','kind':'static','license':'GPL-3.0','project':'Cyfrin/aderyn'},'forge':{'binary':'forge','kind':'test-fuzz','license':'Apache-2.0 OR MIT','project':'foundry-rs/foundry'},'echidna':{'binary':'echidna-test','kind':'property-fuzz','license':'AGPL-3.0','project':'crytic/echidna'},'medusa':{'binary':'medusa','kind':'coverage-guided-fuzz','license':'AGPL-3.0','project':'crytic/medusa'},'wake':{'binary':'wake','kind':'static-fuzz-framework','license':'ISC','project':'Ackee-Blockchain/wake'},'halmos':{'binary':'halmos','kind':'symbolic-testing','license':'AGPL-3.0','project':'a16z/halmos'},'ityfuzz':{'binary':'ityfuzz','kind':'hybrid-fuzz','license':'MIT','project':'ityfuzz/ityfuzz'},'osv-scanner':{'binary':'osv-scanner','kind':'dependency-scan','license':'Apache-2.0','project':'google/osv-scanner'},'gitleaks':{'binary':'gitleaks','kind':'secret-scan','license':'MIT','project':'gitleaks/gitleaks'}}
 STATUS='UNVERIFIED — HUMAN REVIEW REQUIRED'
 class SecurityToolchain:
  def inventory(self):return [{**{'name':n,'available':bool((p:=shutil.which(m['binary']))),'binary':p},**m} for n,m in TOOLS.items()]
@@ -52,13 +52,11 @@ class SecurityToolchain:
   if functions:
    for fn in functions[:20]:cmd.extend(['--function',str(fn)])
   r=self._run(cmd,source_dir,timeout);text=(r.get('stdout','')+'\n'+r.get('stderr',''))
-  counterexamples=re.findall(r'(?:Counterexample|counterexample):\s*([^\n]+)',text)
-  failures=re.findall(r'^\s*\[(?:FAIL|FAILED)\][^\n]*|^\s*(?:FAIL|FAILED):[^\n]*',text,re.I|re.M)
+  counterexamples=re.findall(r'(?:Counterexample|counterexample):\s*([^\n]+)',text);failures=re.findall(r'^\s*\[(?:FAIL|FAILED)\][^\n]*|^\s*(?:FAIL|FAILED):[^\n]*',text,re.I|re.M)
   return {'tool':'halmos','status':'executed','result':r,'counterexamples':counterexamples[:20],'assertion_failures':failures[:20],'evidence_level':'symbolic_counterexample' if counterexamples else ('symbolic_assertion_failure' if failures else 'no_symbolic_failure_observed'),'confirmed_vulnerability':False,'review_status':STATUS}
  def run_invariants(self,source_dir,timeout=180):
   if not shutil.which('forge'):return {'tool':'forge-invariant','status':'skipped','error':'forge not installed','evidence_level':'not_executed','review_status':STATUS}
-  r=self._run(['forge','test','--match-test','invariant_','--json','-vvv'],source_dir,timeout);text=r.get('stdout','')+'\n'+r.get('stderr','');obj=self._json(r.get('stdout',''))
-  failed=False;failure_records=[]
+  r=self._run(['forge','test','--match-test','invariant_','--json','-vvv'],source_dir,timeout);text=r.get('stdout','')+'\n'+r.get('stderr','');obj=self._json(r.get('stdout',''));failed=False;failure_records=[]
   if isinstance(obj,dict):
    blob=json.dumps(obj).lower();failed=any(x in blob for x in ('"status":"failure"','"status":"failed"','"success":false','"result":"failure"'))
   if not failed:failed=bool(re.search(r'^\s*\[(?:FAIL|FAILED)\][^\n]*|^\s*(?:FAIL|FAILED):[^\n]*',text,re.I|re.M))
@@ -92,10 +90,10 @@ class SecurityToolchain:
   if chosen in ('foundry','hardhat','solidity-generic') or chosen is None:return {'status':'bounded_local_validation','framework':'foundry','build':build,'results':[self._bounded_forge(source_dir,min(timeout,180))],'generated_candidates':generated,'destructive_live_testing':False}
   return {'status':'bounded_local_validation','framework':chosen,'build':build,'results':[],'generated_candidates':generated,'destructive_live_testing':False}
  def analyze(self,source_dir,tools=None,timeout=120):
-  requested=tools or ['slither','aderyn','wake'];build=self.detect_build(source_dir);results=[]
+  requested=tools or ['slither','osv-scanner','gitleaks'];build=self.detect_build(source_dir);results=[]
   for name in requested:
    meta=TOOLS.get(name)
    if not meta:results.append({'name':name,'ok':False,'error':'unsupported tool'});continue
    if not shutil.which(meta['binary']):results.append({'name':name,'skipped':True,'error':'not installed',**meta});continue
-   cmd={'slither':['slither','.','--json','-'],'aderyn':['aderyn','--output','-','.'],'wake':['wake','detect'],'forge':['forge','test','--json'],'medusa':['medusa','fuzz','--help'],'echidna':['echidna-test','--help'],'halmos':['halmos']}[name];r=self._run(cmd,source_dir,timeout);results.append({'name':name,**meta,'result':r,'findings':self.parse_result(name,r)})
+   cmd={'slither':['slither','.','--json','-'],'aderyn':['aderyn','--output','-','.'],'wake':['wake','detect'],'forge':['forge','test','--json'],'medusa':['medusa','fuzz','--help'],'echidna':['echidna-test','--help'],'halmos':['halmos'],'ityfuzz':['ityfuzz'],'osv-scanner':['osv-scanner','scan','--format','json','--recursive','.'],'gitleaks':['gitleaks','detect','--no-banner','--report-format','json','--report-path','-']}[name];r=self._run(cmd,source_dir,timeout);results.append({'name':name,**meta,'result':r,'findings':self.parse_result(name,r)})
   return {'authorized_local_analysis_only':True,'build':build,'results':results,'upgrade_surface':self.upgrade_surface(source_dir)}
