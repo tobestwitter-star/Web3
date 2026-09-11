@@ -1,26 +1,17 @@
-"""Structured protocol-aware validation plans built from existing research evidence.
-
-This layer describes what a reproduction must establish; it does not execute a
-live target and it never treats a callable function as an exploit by itself.
-"""
+"""Structured protocol-aware validation plans built from existing research evidence."""
 from __future__ import annotations
 
 import hashlib
 import json
-import re
 from typing import Any, Dict, Iterable, List
 
 STATUS = "UNVERIFIED — HUMAN REVIEW REQUIRED"
+DUPLICATE_STATUS = "POSSIBLE DUPLICATE — HUMAN REVIEW REQUIRED"
 
 REQUIRED_FIELDS = (
-    "attacker_preconditions",
-    "protocol_state",
-    "state_transitions",
-    "attack_sequence",
-    "security_invariant",
-    "expected_violation",
-    "affected_state",
-    "reachability_constraints",
+    "attacker_preconditions", "protocol_state", "state_transitions",
+    "attack_sequence", "security_invariant", "expected_violation",
+    "affected_state", "reachability_constraints",
 )
 
 
@@ -29,11 +20,12 @@ def _stable(value: Any) -> str:
 
 
 def evidence_fingerprint(observation: Dict[str, Any]) -> str:
-    """Fingerprint substantive evidence, excluding nondeterministic timing fields."""
     execution = observation.get("execution") or observation
     material = {
         "engine": observation.get("engine") or execution.get("engine"),
         "finding_id": observation.get("finding_id") or execution.get("finding_id"),
+        "hypothesis_id": observation.get("hypothesis_id"),
+        "invariant": observation.get("security_invariant"),
         "command": execution.get("command"),
         "returncode": execution.get("returncode"),
         "stdout_sha256": execution.get("stdout_sha256"),
@@ -70,12 +62,7 @@ def _matching_path(finding: Dict[str, Any], attack_paths: Iterable[Dict[str, Any
     return None
 
 
-def build_validation_plan(
-    finding: Dict[str, Any],
-    protocol_map: Dict[str, Any] | None = None,
-    attack_paths: Iterable[Dict[str, Any]] | None = None,
-) -> Dict[str, Any]:
-    """Turn source-derived signals into an explicit, testable attack hypothesis."""
+def build_validation_plan(finding: Dict[str, Any], protocol_map: Dict[str, Any] | None = None, attack_paths: Iterable[Dict[str, Any]] | None = None) -> Dict[str, Any]:
     protocol_map = protocol_map or {}
     fn = _function_for_finding(finding, protocol_map)
     path = _matching_path(finding, attack_paths or finding.get("attack_paths", []))
@@ -89,7 +76,6 @@ def build_validation_plan(
         if fn.get("external_call") and "external callback" not in risk_signals: risk_signals.append("external callback")
         if fn.get("state_write") and "state transition" not in risk_signals: risk_signals.append("state transition")
         if fn.get("privileged") and "privileged boundary" not in risk_signals: risk_signals.append("privileged boundary")
-
     invariant_map = {
         "accounting": "protocol value and accounting quantities remain conserved across the ordered state transition",
         "asset_flow": "assets can only move to an allowed recipient/amount under the protocol's authorization and accounting rules",
@@ -104,9 +90,9 @@ def build_validation_plan(
     preconditions = list((path or {}).get("preconditions", [])) or ["attacker can reach the identified entry point within the authorized local/test scope"]
     state = {
         "entry_function": target,
-        "before": "record relevant balances, roles, oracle values, state variables and protocol configuration",
+        "before": finding.get("initial_state") or "record relevant balances, roles, oracle values, state variables and protocol configuration",
         "during": risk_signals,
-        "after": "record affected balances, roles, state variables and externally observable protocol state",
+        "after": finding.get("post_state") or "record affected balances, roles, state variables and externally observable protocol state",
     }
     sequence = list((path or {}).get("sequence", []))
     if not sequence:
@@ -118,35 +104,38 @@ def build_validation_plan(
         ]
     expected = str(finding.get("expected_violation") or f"{invariant} is false after the ordered sequence")
     affected = finding.get("affected_asset") or finding.get("affected_state") or finding.get("asset") or "affected protocol state/value flow not yet quantified"
+    path_reachability = (path or {}).get("reachability")
+    if path_reachability in ("unreachable", "blocked", "inaccessible") or (path and path.get("reachable") is False):
+        reachability_status = "unreachable"
+    elif fn and path:
+        reachability_status = "mapped"
+    elif fn or path:
+        reachability_status = "partial"
+    else:
+        reachability_status = "unresolved"
     reachability = {
         "entry_point": target,
         "source_mapped": bool(fn),
         "path_mapped": bool(path),
+        "status": reachability_status,
         "requires_authorized_local_execution": True,
         "live_target_allowed": False,
     }
     economics = finding.get("economic_analysis") or {}
     economic_consequence = {
-        "status": "unquantified",
+        "status": economics.get("status", "unquantified") if isinstance(economics, dict) else "unquantified",
         "analysis": economics,
         "requirement": "quantify only from source-derived balances/prices/fees or reproduced local evidence; never infer from scanner severity",
     }
     return {
-        "finding_id": finding.get("id"),
-        "title": title,
-        "attacker_preconditions": preconditions,
-        "protocol_state": state,
+        "finding_id": finding.get("id"), "title": title,
+        "attacker_preconditions": preconditions, "protocol_state": state,
         "state_transitions": [s.get("action", s) if isinstance(s, dict) else s for s in sequence],
-        "attack_sequence": sequence,
-        "security_invariant": invariant,
-        "expected_violation": expected,
-        "affected_state": affected,
-        "reachability_constraints": reachability,
-        "economic_consequence": economic_consequence,
-        "risk_signals": risk_signals,
-        "protocol_mapping": {"function": fn, "attack_path": path},
-        "status": STATUS,
-        "validation_only": True,
+        "attack_sequence": sequence, "security_invariant": invariant,
+        "expected_violation": expected, "affected_state": affected,
+        "reachability_constraints": reachability, "economic_consequence": economic_consequence,
+        "risk_signals": risk_signals, "protocol_mapping": {"function": fn, "attack_path": path},
+        "status": STATUS, "validation_only": True,
     }
 
 
@@ -157,31 +146,45 @@ def validate_plan(plan: Dict[str, Any]) -> List[str]:
     reach = plan.get("reachability_constraints")
     if not isinstance(reach, dict) or not reach.get("requires_authorized_local_execution"): errors.append("authorization")
     if isinstance(reach, dict) and reach.get("live_target_allowed") is True: errors.append("live_target_policy")
+    if isinstance(reach, dict) and reach.get("status") == "unreachable" and not plan.get("expected_violation"): errors.append("unreachable_violation")
     return errors
 
 
 def correlate_execution_evidence(observations: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
-    """Combine only relevant independent evidence; duplicate output never adds confidence."""
+    """Correlate relevant evidence only; repeated output never increases confidence."""
     obs = [dict(o) for o in observations]
-    fingerprints = [evidence_fingerprint(o) for o in obs]
+    valid = []
+    malformed = []
+    for o in obs:
+        if not isinstance(o, dict) or not (o.get("finding_id") or o.get("hypothesis_id")):
+            malformed.append(o); continue
+        valid.append(o)
+    fingerprints = [evidence_fingerprint(o) for o in valid]
     unique = list(dict.fromkeys(fingerprints))
-    engines = {str(o.get("engine") or (o.get("execution") or {}).get("engine") or "unknown") for o in obs}
-    substantive = [o for o in obs if o.get("security_assertion") or o.get("invariant_result") or o.get("vulnerability_reproduced")]
+    identities = {
+        (str(o.get("finding_id") or ""), str(o.get("hypothesis_id") or ""), str(o.get("security_invariant") or ""))
+        for o in valid
+    }
+    same_hypothesis = len(identities) <= 1
+    engines = {str(o.get("engine") or (o.get("execution") or {}).get("engine") or "unknown") for o in valid}
+    substantive = [o for o in valid if o.get("security_assertion") or o.get("invariant_result") or o.get("vulnerability_reproduced")]
     independent = len({e for e in engines if e != "unknown"})
-    conflicting = len({str(o.get("outcome") or o.get("status") or "unknown") for o in obs}) > 1
+    outcomes = {str(o.get("outcome") or o.get("status") or "unknown") for o in valid}
+    conflicting = len(outcomes) > 1
+    relevant_independent = independent if same_hypothesis else 0
     score = 0.0
-    if substantive: score += 0.35
-    score += min(0.35, max(0, independent - 1) * 0.175)
-    if len(substantive) >= 2 and len(unique) >= 2: score += 0.20
+    if substantive and same_hypothesis: score += 0.35
+    score += min(0.35, max(0, relevant_independent - 1) * 0.175)
+    if len(substantive) >= 2 and len(unique) >= 2 and same_hypothesis: score += 0.20
     if conflicting: score -= 0.15
+    if malformed: score -= 0.10
     return {
-        "observations": obs,
-        "unique_evidence_fingerprints": unique,
-        "independent_engines": sorted(engines),
-        "independent_engine_count": independent,
-        "conflicting": conflicting,
-        "substantive_evidence_count": len(substantive),
+        "observations": obs, "unique_evidence_fingerprints": unique,
+        "independent_engines": sorted(engines), "independent_engine_count": independent,
+        "relevant_independent_engine_count": relevant_independent,
+        "same_hypothesis": same_hypothesis, "conflicting": conflicting,
+        "substantive_evidence_count": len(substantive), "malformed_evidence_count": len(malformed),
         "confidence_delta": round(max(0.0, min(0.9, score)), 3),
-        "repeatable": len(obs) >= 2 and len(unique) == 1,
+        "repeatable": len(valid) >= 2 and len(unique) == 1,
         "review_status": STATUS,
     }
