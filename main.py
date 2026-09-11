@@ -71,7 +71,7 @@ def research_acquire():
  d=request.get_json(silent=True) or {};op,err,code=_protected(d.get('opportunity_id',''))
  if err:return err,code
  t=d.get('target') or {};from research_pipeline import Target
-target=Target(str(op.get('name','target')),str(t.get('source_url','')),str(t.get('kind','repository')),str(t.get('branch','')),True,str(t.get('scope_evidence','')),t.get('addresses',[]),t.get('contracts',[]),t.get('assets',[]))
+ target=Target(str(op.get('name','target')),str(t.get('source_url','')),str(t.get('kind','repository')),str(t.get('branch','')),True,str(t.get('scope_evidence','')),t.get('addresses',[]),t.get('contracts',[]),t.get('assets',[]))
  if target.kind=='evm_contract' or not target.source_url:return jsonify({'ok':False,'blocked':'unsupported_acquisition_type','reason':'EVM/on-chain targets are in scope records but repository acquisition is only supported for public GitHub repositories.'})
  return jsonify(research.acquirer.clone_public_repo(target,str(d.get('workspace') or os.environ.get('RESEARCH_WORKSPACE','research-workspace')),True))
 @app.post('/api/research/analyze')
