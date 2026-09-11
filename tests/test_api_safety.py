@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from main import app
+from authorization import AuthorizationPolicy
 from bounty_engine import build_report
 from candidate_triage import triage_finding
 from target_resolution import ScopeResolver
@@ -71,3 +72,59 @@ def test_view_function_state_mutation_claim_is_not_bounty_candidate():
     })
     assert finding['triage_classification'] == 'false_positive'
     assert finding['bounty_candidate'] is False
+
+
+def test_backend_target_binding_requires_explicit_record():
+    opportunity = {'id': 'immunefi:fixture'}
+    assert AuthorizationPolicy.target_allowed(opportunity, {
+        'source_url': 'https://github.com/example/project',
+    })[0] is False
+
+
+def test_backend_target_binding_rejects_unlisted_repository(monkeypatch):
+    monkeypatch.setenv('BUGHUNTER_AUTHORIZATION_RECORDS', json.dumps({
+        'opportunities': {
+            'immunefi:fixture': {
+                'verified': True,
+                'verified_by': 'authorized-reviewer',
+                'basis': 'Explicit authorization record',
+                'repositories': ['https://github.com/example/allowed'],
+            }
+        }
+    }))
+    opportunity = {'id': 'immunefi:fixture'}
+    allowed, _ = AuthorizationPolicy.target_allowed(opportunity, {
+        'source_url': 'https://github.com/example/allowed.git',
+    })
+    denied, reason = AuthorizationPolicy.target_allowed(opportunity, {
+        'source_url': 'https://github.com/example/not-allowed',
+    })
+    assert allowed is True
+    assert denied is False
+    assert 'not explicitly bound' in reason
+
+
+def test_backend_target_binding_rejects_program_record_without_target():
+    opportunity = {'id': 'immunefi:fixture'}
+    # A verified program record without a repository/address/root binding must not
+    # silently turn an arbitrary client-supplied source directory into an authorized target.
+    import os
+    previous = os.environ.pop('BUGHUNTER_AUTHORIZATION_RECORDS', None)
+    try:
+        os.environ['BUGHUNTER_AUTHORIZATION_RECORDS'] = json.dumps({
+            'opportunities': {
+                'immunefi:fixture': {
+                    'verified': True,
+                    'verified_by': 'authorized-reviewer',
+                    'basis': 'Explicit authorization record',
+                }
+            }
+        })
+        allowed, reason = AuthorizationPolicy.target_allowed(opportunity, {'source_dir': str(Path.cwd())})
+        assert allowed is False
+        assert 'program-level only' in reason
+    finally:
+        if previous is None:
+            os.environ.pop('BUGHUNTER_AUTHORIZATION_RECORDS', None)
+        else:
+            os.environ['BUGHUNTER_AUTHORIZATION_RECORDS'] = previous
