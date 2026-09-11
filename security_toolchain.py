@@ -78,7 +78,8 @@ class SecurityToolchain:
   gen=HarnessGenerator(source_dir);runner=HarnessRunner();classifier=EvidenceClassifier();candidates=[]
   for finding in (findings or [])[:10]:
    if float(finding.get('priority_score',finding.get('priority',0))) < 45: continue
-   generated=gen.generate(finding,['foundry','echidna','medusa']);execution=[]
+   authorized_finding={**finding,'authorized':True}
+   generated=gen.generate(authorized_finding,['foundry','echidna','medusa']);execution=[]
    for h in generated.get('harnesses',[]):
     if h.get('framework')=='foundry' and h.get('status')=='generated':
      ex=runner.run_foundry(source_dir,h['test_path'],timeout);ex['evidence']=classifier.classify(ex,h);execution.append(ex)
