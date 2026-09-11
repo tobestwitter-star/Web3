@@ -33,6 +33,15 @@ class MatureEngineRunner:
    out=e.stdout or "";err=e.stderr or "";out=out.decode("utf-8","replace") if isinstance(out,bytes) else out;err=err.decode("utf-8","replace") if isinstance(err,bytes) else err
    return {"status":"timeout","error":f"execution exceeded {bounded}s timeout","stdout":out[-self.MAX_OUTPUT:],"stderr":err[-self.MAX_OUTPUT:],"stdout_sha256":_sha256(out),"stderr_sha256":_sha256(err),"duration_seconds":bounded,"command":command,"cwd":os.path.abspath(cwd)}
   except OSError as e:return {"status":"failed","error":str(e),"command":command}
+ @staticmethod
+ def _ityfuzz_has_real_execution(result):
+  execution=result.get("execution",{})
+  if result.get("status")=="completed" and execution.get("returncode")==0:return True
+  if result.get("status")!="timeout":return False
+  output=execution.get("stdout") or ""
+  if "EVM Fuzzer Start" not in output or "Deployed all contracts" not in output:return False
+  matches=re.findall(r"executions:\s*([0-9][0-9,]*)",output)
+  return any(int(value.replace(",",""))>0 for value in matches)
  def _version(self,binary,cwd)->Optional[str]:
   if not shutil.which(binary):return None
   r=self._run([binary,"--version"],cwd,15);text=(r.get("stdout","")+"\n"+r.get("stderr","")).strip();return text.splitlines()[0][:500] if text else None
@@ -106,6 +115,9 @@ class MatureEngineRunner:
   if build!="foundry":return {"tool":"ityfuzz","status":"not_applicable","available":True,"build_system":build,"error":"ItyFuzz escalation requires a Foundry-style Solidity target; target was not mutated","findings":[]}
   deployment_script="script/ItyFuzzDeployment.s.sol:ItyFuzzDeployment"
   r=self._run(["ityfuzz","evm","-m",deployment_script,"--","forge","build"],source_dir,timeout)
-  return {"tool":"ityfuzz","status":r["status"],"available":True,"version":self._version("ityfuzz",source_dir),"build_system":build,"deployment_script":deployment_script,"execution":r,"findings":[],"evidence_provenance":{"engine":"ityfuzz","command":r.get("command"),"cwd":r.get("cwd"),"stdout_sha256":r.get("stdout_sha256"),"stderr_sha256":r.get("stderr_sha256")},"review_status":STATUS}
+  classification={"status":r.get("status"),"execution":r}
+  bounded=self._ityfuzz_has_real_execution(classification)
+  status="completed_bounded" if bounded else r["status"]
+  return {"tool":"ityfuzz","status":status,"available":True,"version":self._version("ityfuzz",source_dir),"build_system":build,"deployment_script":deployment_script,"execution":r,"bounded_execution":bounded,"findings":[],"evidence_provenance":{"engine":"ityfuzz","command":r.get("command"),"cwd":r.get("cwd"),"stdout_sha256":r.get("stdout_sha256"),"stderr_sha256":r.get("stderr_sha256")},"review_status":STATUS}
  def run_core(self,source_dir,timeout=120):return {"status":"core_engine_execution_complete","build_system":self._build_system(source_dir),"engines":[self.run_slither(source_dir,timeout),self.run_foundry(source_dir,timeout)],"review_status":STATUS}
 def _sha256(text:str)->str:return hashlib.sha256(text.encode("utf-8","replace")).hexdigest()
