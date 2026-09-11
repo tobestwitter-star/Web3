@@ -3,6 +3,7 @@ from pathlib import Path
 from flask import Flask,jsonify,request
 from advanced_web3_analyzer import AdvancedWeb3Analyzer,generate_detailed_report
 from bounty_engine import OpportunityStore,PublicProgramDiscovery,build_report
+from professional_report import build_professional_report
 from security_toolchain import SecurityToolchain
 from security_orchestrator import SecurityEngineOrchestrator
 from research_pipeline import ResearchPipeline
@@ -74,11 +75,16 @@ def research_acquire():
  target=Target(str(op.get('name','target')),str(t.get('source_url','')),str(t.get('kind','repository')),str(t.get('branch','')),True,str(t.get('scope_evidence','')),t.get('addresses',[]),t.get('contracts',[]),t.get('assets',[]))
  if target.kind=='evm_contract' or not target.source_url:return jsonify({'ok':False,'blocked':'unsupported_acquisition_type','reason':'EVM/on-chain targets are in scope records but repository acquisition is only supported for public GitHub repositories.'})
  return jsonify(research.acquirer.clone_public_repo(target,str(d.get('workspace') or os.environ.get('RESEARCH_WORKSPACE','research-workspace')),True))
+def _professional_report(result,op):
+ analysis={**result,'authorization':{'required':True,'confirmed':bool(result.get('authorization_confirmed')),'evidence':result.get('scope')}}
+ return build_professional_report(result.get('correlated_findings',[]),op,analysis)
 @app.post('/api/research/analyze')
 def research_analyze():
  d=request.get_json(silent=True) or {};op,err,code=_protected(d.get('opportunity_id',''))
  if err:return err,code
- return jsonify(research.analyze_local(str(d.get('source_dir','')),str(d.get('protocol_name','authorized-target')),d.get('source_code'),True,d.get('tools'),op))
+ result=research.analyze_local(str(d.get('source_dir','')),str(d.get('protocol_name','authorized-target')),d.get('source_code'),True,d.get('tools'),op)
+ if result.get('status')=='analysis_complete':result['professional_report']=_professional_report(result,op)
+ return jsonify(result)
 @app.post('/api/research/economic-analysis')
 def research_economic():
  d=request.get_json(silent=True) or {};op,err,code=_protected(d.get('opportunity_id',''))
@@ -103,7 +109,9 @@ def queue_run_once():
  item=queue.next()
  if not item:return jsonify({'status':'empty','human_review_required':True})
  try:
-  result=research.analyze_local(str(d.get('source_dir','')),str(d.get('protocol_name',op.get('name','authorized-target'))),d.get('source_code'),True,d.get('tools'),op);findings=result.get('correlated_findings',[]);queue.update(item['opportunity_id'],'report_ready' if findings else 'completed',len(findings),{'last_result':'analysis_complete','review_status':STATUS});return jsonify({'status':'completed_one_bounded_job','opportunity':op,'result':result,'next_available':bool(queue.list(1)),'human_review_required':True})
+  result=research.analyze_local(str(d.get('source_dir','')),str(d.get('protocol_name',op.get('name','authorized-target'))),d.get('source_code'),True,d.get('tools'),op);findings=result.get('correlated_findings',[]);queue.update(item['opportunity_id'],'report_ready' if findings else 'completed',len(findings),{'last_result':'analysis_complete','review_status':STATUS});
+  if result.get('status')=='analysis_complete':result['professional_report']=_professional_report(result,op)
+  return jsonify({'status':'completed_one_bounded_job','opportunity':op,'result':result,'next_available':bool(queue.list(1)),'human_review_required':True})
  except Exception as exc:
   queue.update(item['opportunity_id'],'failed',0,{'error':str(exc),'review_status':STATUS});return jsonify({'status':'job_failed','opportunity':op,'error':str(exc),'human_review_required':True}),500
 @app.post('/api/research/queue/<opportunity_id>')
@@ -154,5 +162,11 @@ def analyze_advanced():
  if not code_text or not name:return jsonify({'error':'Missing protocol_code or protocol_name'}),400
  findings=AdvancedWeb3Analyzer().analyze_protocol(code_text,name);reports=[{'finding_id':f.id,'vulnerability':f.vulnerability_type,'severity':f.severity,'confidence':f.confidence,'estimated_bounty':{'low':f.bounty_estimate_low,'high':f.bounty_estimate_high},'detailed_report':generate_detailed_report(f),'requires_manual_verification':True,'status':STATUS,'learning_value':f.learning_value} for f in findings];return jsonify({'status':'analysis_complete','protocol':name,'findings_count':len(findings),'findings':[fd(f) for f in findings],'detailed_reports':reports,'next_step':'Review, reproduce, and manually verify before submission.'})
 @app.post('/api/generate-human-review-report')
-def generate_human_review_report():d=request.get_json(silent=True) or {};return jsonify({'status':'report_ready_for_human_review','report':build_report(d.get('findings',[]),d.get('opportunity',{}))})
+def generate_human_review_report():
+ d=request.get_json(silent=True) or {};op,err,code=_protected(d.get('opportunity_id',''))
+ if err:return err,code
+ result=d.get('analysis_result') or {}
+ if not result.get('correlated_findings') and d.get('findings'):
+  return jsonify({'error':'Reports must be generated from the final correlated research result; raw scanner findings are not accepted.','report':None}),400
+ return jsonify({'status':'report_ready_for_human_review','report':_professional_report(result,op)})
 if __name__=='__main__':app.run(host='0.0.0.0',port=int(os.environ.get('PORT',8080)),debug=False)
