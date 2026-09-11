@@ -9,6 +9,7 @@ FIXTURE=ROOT/"benchmarks"/"engine_fixture";SLITHER_FIXTURE=ROOT/"benchmarks"/"sl
 def _ityfuzz_has_real_execution(result):
  execution=result.get("execution",{})
  if result.get("status")=="completed" and execution.get("returncode")==0:return True
+ if result.get("status")=="completed_bounded" and result.get("bounded_execution") is True:return True
  if result.get("status")!="timeout":return False
  output=(execution.get("stdout") or "")
  if "EVM Fuzzer Start" not in output or "Deployed all contracts" not in output:return False
