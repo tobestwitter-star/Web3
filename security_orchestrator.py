@@ -4,8 +4,8 @@ import hashlib,json,os,shutil,subprocess,time
 from typing import Any,Dict,Iterable,List
 from security_toolchain import SecurityToolchain, STATUS
 from mature_engine_runner import MatureEngineRunner
-ENGINE_POLICY={"slither":{"stage":1,"binary":"slither","questions":{"broad","reentrancy","access_control","delegatecall","oracle","accounting"}},"forge":{"stage":1,"binary":"forge","questions":{"baseline","reproduction","invariant","reentrancy","state_machine","accounting"}},"osv-scanner":{"stage":1,"binary":"osv-scanner","questions":{"dependencies"}},"gitleaks":{"stage":1,"binary":"gitleaks","questions":{"secrets"}},"sourcify":{"stage":1,"binary":None,"questions":{"verification"}},"ityfuzz":{"stage":2,"binary":"ityfuzz","questions":{"execution_path","reentrancy","state_machine","oracle","accounting"}},"halmos":{"stage":2,"binary":"halmos","questions":{"symbolic","state_machine","accounting","access_control"}},"wake":{"stage":3,"binary":"wake","questions":{"independent_static","broad"}},"medusa":{"stage":3,"binary":"medusa","questions":{"state_machine","invariant","fuzz"}},"echidna":{"stage":3,"binary":"echidna-test","questions":{"state_machine","invariant","fuzz"}}}
-QUESTION_MAP={"reentrancy":{"slither","forge","ityfuzz"},"state_machine":{"forge","halmos","medusa","echidna","ityfuzz"},"symbolic":{"halmos"},"dependencies":{"osv-scanner"},"secrets":{"gitleaks"},"verification":{"sourcify"},"execution_path":{"forge","ityfuzz"},"independent_static":{"wake"},"invariant":{"forge","medusa","echidna"},"broad":{"slither","forge"}}
+ENGINE_POLICY={"slither":{"stage":1,"binary":"slither","questions":{"broad","reentrancy","access_control","delegatecall","oracle","accounting"}},"forge":{"stage":1,"binary":"forge","questions":{"baseline","reproduction","invariant","reentrancy","state_machine","accounting","execution_path"}},"osv-scanner":{"stage":1,"binary":"osv-scanner","questions":{"dependencies"}},"gitleaks":{"stage":1,"binary":"gitleaks","questions":{"secrets"}},"sourcify":{"stage":1,"binary":None,"questions":{"verification"}},"ityfuzz":{"stage":2,"binary":"ityfuzz","questions":{"execution_path","reentrancy","state_machine","oracle","accounting"}},"halmos":{"stage":2,"binary":"halmos","questions":{"symbolic","state_machine","accounting","access_control"}},"wake":{"stage":3,"binary":"wake","questions":{"independent_static","broad"}},"medusa":{"stage":3,"binary":"medusa","questions":{"state_machine","invariant","fuzz"}},"echidna":{"stage":3,"binary":"echidna-test","questions":{"state_machine","invariant","fuzz"}}}
+QUESTION_MAP={"reentrancy":{"slither","forge","ityfuzz"},"state_machine":{"forge","halmos","ityfuzz","medusa","echidna"},"symbolic":{"halmos"},"dependencies":{"osv-scanner"},"secrets":{"gitleaks"},"verification":{"sourcify"},"execution_path":{"forge","ityfuzz"},"invariant":{"forge","medusa","echidna"},"broad":{"slither","forge"},"oracle":{"slither","ityfuzz"},"accounting":{"slither","forge","ityfuzz"},"access_control":{"slither","halmos"},"delegatecall":{"slither"}}
 class SecurityEngineOrchestrator:
  def __init__(self,toolchain:SecurityToolchain|None=None):self.toolchain=toolchain or SecurityToolchain();self.core=MatureEngineRunner()
  def inventory(self)->List[Dict[str,Any]]:
@@ -37,16 +37,13 @@ class SecurityEngineOrchestrator:
    for source in obj.get("results",[]) if isinstance(obj.get("results"),list) else []:
     src=(source.get("source") or {}).get("path","")
     for pkg in source.get("packages",[]) if isinstance(source.get("packages"),list) else []:
-     p=pkg.get("package") or {};vulns=pkg.get("vulnerabilities",[]) or []
-     for vuln in vulns:
-      if not isinstance(vuln,dict):continue
-      vid=vuln.get("id") or "OSV finding";findings.append({"id":vid,"title":vid,"description":vuln.get("summary") or vuln.get("details") or "Known dependency vulnerability","severity":"high" if any(str(a).startswith("CVE-") for a in vuln.get("aliases",[])) else "medium","confidence":.95,"file":src,"location":src,"evidence":{"package":p,"vulnerability":vuln},"category":"dependency_vulnerability"})
+     p=pkg.get("package") or {}
+     for vuln in pkg.get("vulnerabilities",[]) or []:
+      if isinstance(vuln,dict):findings.append({"id":vuln.get("id") or "OSV finding","title":vuln.get("id") or "Known dependency vulnerability","description":vuln.get("summary") or vuln.get("details") or "Known dependency vulnerability","severity":"high" if any(str(a).startswith("CVE-") for a in vuln.get("aliases",[])) else "medium","confidence":.95,"file":src,"location":src,"evidence":{"package":p,"vulnerability":vuln},"category":"dependency_vulnerability"})
   elif name=="gitleaks":
-   values=obj if isinstance(obj,list) else []
-   for d in values:
-    if not isinstance(d,dict):continue
-    file=d.get("File") or d.get("file") or "";line=d.get("StartLine") or d.get("startLine") or d.get("Line")
-    findings.append({"id":d.get("RuleID") or d.get("ruleID") or "gitleaks-secret","title":d.get("Description") or d.get("description") or "Potential secret","description":d.get("Description") or d.get("description") or "Gitleaks secret detection","severity":"high","confidence":.9,"file":file,"line":line,"location":f"{file}:{line}" if file and line else file,"evidence":d,"category":"secret_exposure"})
+   for d in obj if isinstance(obj,list) else []:
+    if isinstance(d,dict):
+     file=d.get("File") or d.get("file") or "";line=d.get("StartLine") or d.get("startLine") or d.get("Line");findings.append({"id":d.get("RuleID") or d.get("ruleID") or "gitleaks-secret","title":d.get("Description") or d.get("description") or "Potential secret","description":d.get("Description") or d.get("description") or "Gitleaks secret detection","severity":"high","confidence":.9,"file":file,"line":line,"location":f"{file}:{line}" if file and line else file,"evidence":d,"category":"secret_exposure"})
   return findings
  def _selected(self,question:str,stage:int,available:Dict[str,Dict[str,Any]],explicit:Iterable[str]|None=None)->List[str]:
   allowed=set(explicit) if explicit else QUESTION_MAP.get(question,{"slither","forge"});return [n for n in allowed if ENGINE_POLICY.get(n,{}).get("stage")==stage and available.get(n,{}).get("available")]
@@ -55,23 +52,28 @@ class SecurityEngineOrchestrator:
   for name in selected:
    if name=="slither":core=self.core.run_slither(source_dir,timeout);results.append({"tool":name,"stage":1,"question":"broad","result":core.get("execution",{}),"findings":core.get("findings",[]),"integration":core,"review_status":STATUS});continue
    if name=="forge":core=self.core.run_foundry(source_dir,timeout);results.append({"tool":name,"stage":1,"question":"baseline","result":core.get("execution",{}),"findings":core.get("findings",[]),"integration":core,"review_status":STATUS});continue
-   command=["osv-scanner","scan","source","-r",".","--format","json"] if name=="osv-scanner" else ["gitleaks","detect","--no-banner","--report-format","json","--report-path","-"]
-   r=self._run(command,source_dir,timeout);findings=self._specialized_findings(name,r);results.append({"tool":name,"stage":1,"question":"dependencies" if name=="osv-scanner" else "secrets","result":r,"version":self._version(name,source_dir),"findings":findings,"evidence_provenance":{"engine":name,"version":self._version(name,source_dir),"command":r.get("command"),"cwd":r.get("cwd"),"stdout_sha256":r.get("stdout_sha256"),"stderr_sha256":r.get("stderr_sha256")},"review_status":STATUS})
+   command=["osv-scanner","scan","source","-r",".","--format","json"] if name=="osv-scanner" else ["gitleaks","detect","--no-banner","--report-format","json","--report-path","-"];r=self._run(command,source_dir,timeout);findings=self._specialized_findings(name,r);results.append({"tool":name,"stage":1,"question":"dependencies" if name=="osv-scanner" else "secrets","result":r,"version":self._version(name,source_dir),"findings":findings,"evidence_provenance":{"engine":name,"version":self._version(name,source_dir),"command":r.get("command"),"cwd":r.get("cwd"),"stdout_sha256":r.get("stdout_sha256"),"stderr_sha256":r.get("stderr_sha256")},"review_status":STATUS})
   return {"stage":1,"selected":selected,"skipped":[n for n in (explicit or ("slither","forge","osv-scanner","gitleaks")) if n not in selected],"results":results,"resource_policy":{"timeout_seconds":min(int(timeout),180),"max_parallel":1}}
+ def _score_engine(self,name,finding:Dict[str,Any],question:str,reachability:float=0.5,evidence:float=0.5)->float:
+  p=ENGINE_POLICY[name];text=" ".join(str(finding.get(k,"")) for k in ("title","description","category")).lower();score=0.0
+  score+=2.0 if question in p["questions"] else 0.0;score+=1.5*reachability;score+=1.5*evidence
+  if name=="ityfuzz" and any(x in text for x in ("reentr","oracle","state","accounting")):score+=2
+  if name=="halmos" and any(x in text for x in ("access","state","invariant","symbolic")):score+=2
+  if name in {"medusa","echidna"} and any(x in text for x in ("invariant","state","fuzz")):score+=1
+  return score
  def run_for_candidates(self,source_dir:str,findings:List[Dict[str,Any]],timeout:int=180)->Dict[str,Any]:
   inventory={x["name"]:x for x in self.inventory()};candidates=sorted(findings or [],key=lambda f:float(f.get("priority",f.get("priority_score",0)) or 0),reverse=True)[:10];decisions=[]
   for finding in candidates:
-   question=self._question_for_finding(finding);stage2=self._selected(question,2,inventory);stage3=self._selected(question,3,inventory);chosen=stage2[:1] if stage2 else []
-   if not chosen and stage3 and float(finding.get("priority",0) or 0)>=70:chosen=stage3[:1]
-   evidence=[]
+   question=self._question_for_finding(finding);reachability=float(finding.get("reachability",finding.get("reachability_score",0.5)) or 0.5);evidence=float(finding.get("confidence",finding.get("evidence_score",0.5)) or 0.5);eligible=[n for n in QUESTION_MAP.get(question,set()) if ENGINE_POLICY.get(n,{}).get("stage",9)>1 and inventory.get(n,{}).get("available")];ranked=sorted(eligible,key=lambda n:self._score_engine(n,finding,question,reachability,evidence),reverse=True);chosen=ranked[:1];evidence_runs=[]
    for name in chosen:
     if name=="halmos":result=self.core.run_halmos(source_dir,min(int(timeout),180))
+    elif name=="ityfuzz":result=self.core.run_ityfuzz(source_dir,min(int(timeout),180))
     else:
-     command={"ityfuzz":["ityfuzz"],"medusa":["medusa","fuzz"],"echidna":["echidna-test","."],"wake":["wake","detect"]}.get(name)
+     command={"medusa":["medusa","fuzz"],"echidna":["echidna-test","."],"wake":["wake","detect"]}.get(name)
      if not command:continue
      result=self._run(command,source_dir,min(int(timeout),180))
-    evidence.append({"tool":name,"stage":ENGINE_POLICY[name]["stage"],"question":question,"result":result,"review_status":STATUS})
-   decisions.append({"finding_id":finding.get("id"),"question":question,"selected_engines":chosen,"selection_reason":"candidate-driven escalation; bounded to at most one heavyweight engine per candidate","skipped_engines":[n for n in ENGINE_POLICY if n not in chosen and ENGINE_POLICY[n]["stage"]>1],"evidence":evidence,"review_status":STATUS})
+    evidence_runs.append({"tool":name,"stage":ENGINE_POLICY[name]["stage"],"question":question,"result":result,"review_status":STATUS})
+   decisions.append({"finding_id":finding.get("id"),"question":question,"reachability_score":reachability,"evidence_score":evidence,"ranked_engines":ranked,"selected_engines":chosen,"selection_reason":"finding class + reachability + evidence confidence + tool specialization + bounded cost; one heavyweight escalation per candidate","evidence":evidence_runs,"review_status":STATUS})
   return {"stage":2,"decisions":decisions,"resource_policy":{"max_heavy_engines_per_candidate":1,"timeout_seconds":min(int(timeout),180)}}
  def _question_for_finding(self,finding:Dict[str,Any])->str:
   text=" ".join(str(finding.get(k,"")) for k in ("title","description","category")).lower()
