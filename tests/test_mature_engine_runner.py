@@ -5,12 +5,13 @@ import pytest
 
 from mature_engine_runner import MatureEngineRunner
 
-FIXTURE = Path(__file__).resolve().parents[1] / "benchmarks" / "engine_fixture"
+SLITHER_FIXTURE = Path(__file__).resolve().parents[1] / "benchmarks" / "slither_fixture"
+FOUNDRY_FIXTURE = Path(__file__).resolve().parents[1] / "benchmarks" / "engine_fixture"
 
 
 @pytest.mark.skipif(not shutil.which("slither"), reason="Slither binary is not installed in this environment")
 def test_slither_real_execution_and_provenance():
-    result = MatureEngineRunner().run_slither(str(FIXTURE), timeout=120)
+    result = MatureEngineRunner().run_slither(str(SLITHER_FIXTURE), timeout=120)
     assert result["status"] == "completed"
     assert result["execution"]["returncode"] == 0
     assert result["version"]
@@ -20,7 +21,7 @@ def test_slither_real_execution_and_provenance():
 
 @pytest.mark.skipif(not shutil.which("forge"), reason="Foundry forge binary is not installed in this environment")
 def test_foundry_real_execution_and_provenance():
-    result = MatureEngineRunner().run_foundry(str(FIXTURE), timeout=120)
+    result = MatureEngineRunner().run_foundry(str(FOUNDRY_FIXTURE), timeout=120)
     assert result["status"] == "completed"
     assert result["execution"]["returncode"] == 0
     assert result["version"]
