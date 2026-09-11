@@ -10,6 +10,7 @@ from security_toolchain import SecurityToolchain
 from security_orchestrator import SecurityEngineOrchestrator
 from target_resolution import ScopeResolver,BuildDetector,TargetMap
 from protocol_research import ProtocolMapper,BusinessLogicEngine,FindingPrioritizer,AttackPathEngine
+from protocol_validation import build_validation_plan,validate_plan
 from historical_intelligence import HistoricalIntelligence
 from economic_analysis import EconomicAnalyzer
 from evidence_attribution import SourceAttributor
@@ -44,7 +45,7 @@ class FindingCorrelator:
  def normalize(self,f,engine):
   text=' '.join(str(f.get(k,'')) for k in ('title','vulnerability','description','message','check'));loc=str(f.get('location') or f.get('path') or f.get('source') or '');sev=str(f.get('severity') or 'medium').lower();category=str(f.get('category') or '').lower();tokens=set(re.findall(r'[a-z0-9]{4,}',text.lower()))-self.STOP;raw=f.get('evidence',[]);evidence=raw if isinstance(raw,list) else [raw]
   out={'id':f.get('id') or hashlib.sha256((text+'|'+loc).encode()).hexdigest()[:16],'engine':engine,'title':f.get('title') or f.get('vulnerability') or f.get('check') or engine,'description':text[:4000],'location':loc,'severity':sev,'category':category,'confidence':float(f.get('confidence',.45) or .45),'evidence':evidence,'tokens':tokens,'fingerprint':hashlib.sha256((re.sub(r'\s+',' ',text.lower())+'|'+loc.lower()).encode()).hexdigest()}
-  for k in ('file','contract','function','modifier','source_attribution','attribution_status','location_uncertain'):
+  for k in ('file','contract','function','modifier','source_attribution','attribution_status','location_uncertain','line'):
    if k in f:out[k]=f[k]
   return out
  def _key(self,f):
@@ -65,7 +66,11 @@ class FindingCorrelator:
     else:
      match['occurrences']+=1
      if f['engine'] not in match['engines']:match['engines'].append(f['engine'])
-     match['cross_tool_confidence']=min(1,max(match['cross_tool_confidence'],f['confidence'])+.12);match['evidence'].extend(f['evidence']);match['engine_observations'].append(observation);match['duplicate_classification']='related multi-engine finding'
+     # Static duplicate observations alone do not manufacture confidence.
+     substantive=(f.get('category') or f.get('title','')).lower() not in ('informational','observation')
+     if substantive and f['engine'] not in match['engines']:
+      match['cross_tool_confidence']=min(1,max(match['cross_tool_confidence'],f['confidence'])+.12)
+     match['evidence'].extend(f['evidence']);match['engine_observations'].append(observation);match['duplicate_classification']='related multi-engine finding'
      if self.SEVERITY.get(f['severity'],2)>self.SEVERITY.get(match['severity'],2):match['severity']=f['severity']
   result=[]
   for f in merged:
@@ -97,13 +102,13 @@ class ResearchPipeline:
   for f in ranked:
    fid=str(f.get('id'));e=entry(fid);candidate=by_candidate.get(fid)
    if candidate:
+    e['validation_plan']=candidate.get('validation_plan')
     for ex in candidate.get('execution',[]) or []:
-     tool=ex.get('tool','forge');ev=ex.get('evidence')
-     e['engine_observations'].append({'engine':tool,'type':'reproduction','structured_result':ex});e['execution_metadata'].append(ex);e['provenance'].append({'engine':tool,'command':ex.get('command'),'cwd':ex.get('cwd'),'status':ex.get('status'),'evidence_status':ev.get('status') if isinstance(ev,dict) else None})
+     tool=ex.get('tool','forge');ev=ex.get('evidence');e['engine_observations'].append({'engine':tool,'type':'reproduction','structured_result':ex});e['execution_metadata'].append(ex);e['provenance'].append({'engine':tool,'command':ex.get('command'),'cwd':ex.get('cwd'),'status':ex.get('status'),'evidence_status':ev.get('status') if isinstance(ev,dict) else None})
      if isinstance(ev,dict):e['reproduction']={**ev,'execution_status':ex.get('status'),'returncode':ex.get('returncode'),'candidate_failed':ex.get('candidate_failed')}
    if f.get('engine_observations'):e['engine_observations'].extend(f['engine_observations'])
    if f.get('evidence_provenance'):e['provenance'].extend(_as_list(f.get('evidence_provenance')))
-   e['attack_paths']=f.get('attack_paths') or [];e['economic_analysis']=f.get('economic_analysis');e['historical_context']=f.get('historical_context') or []
+   e['attack_paths']=f.get('attack_paths') or [];e['economic_analysis']=f.get('economic_analysis');e['historical_context']=f.get('historical_context') or [];e['protocol_validation_plan']=f.get('validation_plan')
    e['symbolic']=symbolic;e['invariant']=invariants
   return registry
  def analyze_local(self,source_dir,protocol_name,source_code=None,authorization_confirmed=False,tools=None,opportunity=None):
@@ -126,6 +131,9 @@ class ResearchPipeline:
   for f in combined:
    exact=[p for p in attack_paths if p.get('entry_point','')==f'{f.get("contract","")}.{f.get("function","")}' or (f.get('function') and p.get('entry_point','').split('.')[-1]==str(f.get('function')))]
    f['attack_paths']=exact[:3];f['attack_path_uncertain']=not bool(exact);f['economic_analysis']=self.economics.analyze(f);f['status']=STATUS
+   f['protocol_map']=protocol_map
+   f['validation_plan']=build_validation_plan(f,protocol_map,exact[:3]);f['validation_plan_errors']=validate_plan(f['validation_plan'])
+   if f['validation_plan_errors']:f['status']=STATUS
   ranked=self.prioritizer.rank(combined,opportunity);candidate_validation=self.tools.generate_and_validate(source_dir,ranked[:10],True,180);symbolic=self.tools.run_symbolic(source_dir,180);invariants=self.tools.run_invariants(source_dir,180)
   for c in candidate_validation.get('candidates',[]):
    for ex in c.get('execution',[]):
@@ -134,7 +142,7 @@ class ResearchPipeline:
       if f.get('id')==c.get('finding_id'):
        ev=ex.get('evidence') or {};f['execution_evidence']=ev or {'returncode':ex.get('returncode'),'candidate_failed':ex.get('candidate_failed'),'stdout':ex.get('stdout','')[-12000:],'stderr':ex.get('stderr','')[-8000:]};f['reproducibility']=float(ev.get('reproducibility_score',0.0));f['status']=STATUS
   ranked=self.prioritizer.rank(ranked,opportunity);historical_context=self._historical_context(ranked);registry=self._evidence_registry(ranked,candidate_validation,symbolic,invariants,orchestration,attack_paths)
-  return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'protocol_map':protocol_map,'attack_paths':attack_paths,'business_logic_hypotheses':hypotheses[:100],'tool_results':orchestration.get('stage1',{}).get('results',[]),'security_engine_orchestration':orchestration,'symbolic_validation':symbolic,'invariant_validation':invariants,'upgrade_surface':self.tools.upgrade_surface(source_dir),'triaged_findings':triaged_findings,'correlated_findings':ranked,'exploit_test_candidates':candidate_validation,'evidence_registry':registry,'historical_intelligence':historical_context,'historical_search_leads':[self.history.search_urls(f.get('title',''),f.get('category','')) for f in ranked[:10]],'review_status':STATUS,'do_not_auto_submit':True}
+  return {'status':'analysis_complete','authorization_confirmed':True,'build':build,'protocol_map':protocol_map,'attack_paths':attack_paths,'business_logic_hypotheses':hypotheses[:100],'tool_results':orchestration.get('stage1',{}).get('results',[]),'security_engine_orchestration':orchestration,'symbolic_validation':symbolic,'invariant_validation':invariants,'upgrade_surface':self.tools.upgrade_surface(source_dir),'triaged_findings':triaged_findings,'correlated_findings':ranked,'exploit_test_candidates':candidate_validation,'evidence_registry':registry,'historical_intelligence':historical_context,'historical_search_leads':[self.history.search_urls(f.get('title',''),f.get('category','')) for f in ranked[:10]],'review_status':STATUS,'do_not_auto_submit':True,'human_review_only':True}
 
 def _as_list(value):
  if value is None:return []
