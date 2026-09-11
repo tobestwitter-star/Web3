@@ -8,6 +8,7 @@ on:
       - '.github/workflows/backend.yml'
       - 'benchmarks/engine_fixture/**'
       - 'benchmarks/slither_fixture/**'
+      - 'benchmarks/protocol_fixtures/**'
       - 'render_start.sh'
   pull_request:
     paths:
@@ -16,6 +17,7 @@ on:
       - '.github/workflows/backend.yml'
       - 'benchmarks/engine_fixture/**'
       - 'benchmarks/slither_fixture/**'
+      - 'benchmarks/protocol_fixtures/**'
       - 'render_start.sh'
   workflow_dispatch:
 
@@ -37,13 +39,8 @@ jobs:
           curl -fsSL https://foundry.paradigm.xyz | bash
           export PATH="$HOME/.config/.foundry/bin:$PATH"
           for attempt in 1 2 3; do
-            if foundryup; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "Foundry installation failed after 3 attempts" >&2
-              exit 1
-            fi
+            if foundryup; then break; fi
+            if [ "$attempt" -eq 3 ]; then echo "Foundry installation failed after 3 attempts" >&2; exit 1; fi
             sleep $((attempt * 5))
           done
           forge --version
@@ -54,27 +51,16 @@ jobs:
           set -euo pipefail
           curl -fsSL -o "$RUNNER_TEMP/ityfuzz-installer.sh" https://ity.fuzz.land/
           bash "$RUNNER_TEMP/ityfuzz-installer.sh"
-          if [ -f "$HOME/.bashrc" ]; then
-            source "$HOME/.bashrc"
-          fi
+          if [ -f "$HOME/.bashrc" ]; then source "$HOME/.bashrc"; fi
           export PATH="$HOME/.ityfuzz/bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
           if ! command -v ityfuzzup >/dev/null 2>&1; then
             ityfuzzup_path="$(find "$HOME" -type f -name ityfuzzup -perm -u+x 2>/dev/null | head -n 1 || true)"
-            if [ -n "$ityfuzzup_path" ]; then
-              export PATH="$(dirname "$ityfuzzup_path"):$PATH"
-            fi
+            if [ -n "$ityfuzzup_path" ]; then export PATH="$(dirname "$ityfuzzup_path"):$PATH"; fi
           fi
-          if ! command -v ityfuzzup >/dev/null 2>&1; then
-            echo "ityfuzzup was not found after running the official installer" >&2
-            find "$HOME" -type f -name ityfuzzup -print 2>/dev/null || true
-            exit 1
-          fi
+          if ! command -v ityfuzzup >/dev/null 2>&1; then echo "ityfuzzup was not found" >&2; exit 1; fi
           ityfuzzup
           found="$(find "$HOME" "$RUNNER_TEMP" -type f -name ityfuzz -perm -u+x 2>/dev/null | head -n 1 || true)"
-          if [ -z "$found" ]; then
-            echo "ItyFuzz installation failed" >&2
-            exit 1
-          fi
+          if [ -z "$found" ]; then echo "ItyFuzz installation failed" >&2; exit 1; fi
           mkdir -p "$RUNNER_TEMP/ityfuzz/bin"
           install -m 0755 "$found" "$RUNNER_TEMP/ityfuzz/bin/ityfuzz"
           echo "$RUNNER_TEMP/ityfuzz/bin" >> "$GITHUB_PATH"
@@ -90,8 +76,7 @@ jobs:
           curl -fsSL -o "$HOME/.local/bin/gitleaks.tar.gz" 'https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz'
           echo '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  '"$HOME/.local/bin/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf "$HOME/.local/bin/gitleaks.tar.gz" -C "$HOME/.local/bin" gitleaks
-          chmod +x "$HOME/.local/bin/gitleaks"
-          rm -f "$HOME/.local/bin/gitleaks.tar.gz"
+          chmod +x "$HOME/.local/bin/gitleaks"; rm -f "$HOME/.local/bin/gitleaks.tar.gz"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Install Solidity compiler used by fixture
         run: |
@@ -109,6 +94,8 @@ jobs:
         run: python -m compileall -q .
       - name: Run production engine self-test
         run: python scripts/live_engine_self_test.py
+      - name: Run executable local protocol fixture benchmark
+        run: python benchmarks/run_protocol_fixtures.py
       - name: Run tests
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
