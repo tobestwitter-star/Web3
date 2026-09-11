@@ -2,10 +2,12 @@
 set -euo pipefail
 export FOUNDRY_DIR="$PWD/.render-foundry"
 export TOOLS_DIR="$PWD/.render-tools/bin"
-export PATH="$FOUNDRY_DIR/bin:$TOOLS_DIR:$HOME/.config/.foundry/bin:$HOME/.local/bin:$PATH"
+export ITYFUZZ_DIR="$PWD/.render-ityfuzz"
+export PATH="$FOUNDRY_DIR/bin:$TOOLS_DIR:$ITYFUZZ_DIR/bin:$HOME/.config/.foundry/bin:$HOME/.local/bin:$PATH"
 command -v forge
 command -v slither
 command -v halmos
+command -v ityfuzz
 command -v osv-scanner
 command -v gitleaks
 python scripts/live_engine_self_test.py
