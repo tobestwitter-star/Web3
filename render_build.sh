@@ -6,10 +6,9 @@ python -m pip install -r requirements.txt
 export FOUNDRY_DIR="$PWD/.render-foundry"
 export TOOLS_DIR="$PWD/.render-tools/bin"
 export ITYFUZZ_DIR="$PWD/.render-ityfuzz"
-export PATH="$FOUNDRY_DIR/bin:$TOOLS_DIR:$ITYFUZZ_DIR/bin:$HOME/.local/bin:$PATH"
+export PATH="$FOUNDRY_DIR/bin:$TOOLS_DIR:$ITYFUZZ_DIR/bin:$HOME/.local/bin:$HOME/.ityfuzz/bin:$PATH"
 mkdir -p "$FOUNDRY_DIR/bin" "$TOOLS_DIR" "$ITYFUZZ_DIR/bin"
 
-# foundryup-init honors the project-local install location on Render's Python image.
 if [ ! -x "$FOUNDRY_DIR/bin/forge" ]; then
   curl -L https://foundry.paradigm.xyz | bash
 fi
@@ -18,10 +17,9 @@ if [ -x "$FOUNDRY_DIR/bin/foundryup" ] && [ ! -x "$FOUNDRY_DIR/bin/forge" ]; the
   "$FOUNDRY_DIR/bin/foundryup"
 fi
 
-# Compatibility fallback for installers that use the standard user location.
-if [ ! -x "$FOUNDRY_DIR/bin/forge" ] && [ -x "$HOME/.config/.foundry/bin/foundryup" ]; then
-  "$HOME/.config/.foundry/bin/foundryup"
-  cp -f "$HOME/.config/.foundry/bin"/{forge,cast,anvil,chisel,solar} "$FOUNDRY_DIR/bin/" 2>/dev/null || true
+if [ ! -x "$FOUNDRY_DIR/bin/forge" ] && [ -x "$HOME/.foundry/bin/foundryup" ]; then
+  "$HOME/.foundry/bin/foundryup"
+  cp -f "$HOME/.foundry/bin"/{forge,cast,anvil,chisel,solar} "$FOUNDRY_DIR/bin/" 2>/dev/null || true
 fi
 
 if [ ! -x "$FOUNDRY_DIR/bin/forge" ]; then
@@ -35,6 +33,23 @@ install_ityfuzz() {
   curl -fsSL -o "$installer" https://ity.fuzz.land/
   bash "$installer"
   rm -f "$installer"
+
+  # The official installer installs ityfuzzup and adds it to the user's shell profile.
+  # Source that profile explicitly because Render executes this build non-interactively.
+  if [ -f "$HOME/.bashrc" ]; then
+    # shellcheck disable=SC1090
+    source "$HOME/.bashrc" || true
+  fi
+  if [ -f /opt/render/.bashrc ]; then
+    # shellcheck disable=SC1091
+    source /opt/render/.bashrc || true
+  fi
+  if command -v ityfuzzup >/dev/null 2>&1; then
+    ityfuzzup
+  elif [ -x "$HOME/.ityfuzz/bin/ityfuzzup" ]; then
+    "$HOME/.ityfuzz/bin/ityfuzzup"
+  fi
+
   if [ -x "$HOME/.ityfuzz/bin/ityfuzz" ]; then
     cp -f "$HOME/.ityfuzz/bin/ityfuzz" "$ITYFUZZ_DIR/bin/ityfuzz"
   elif [ -x "$HOME/.local/bin/ityfuzz" ]; then
@@ -42,7 +57,7 @@ install_ityfuzz() {
   elif command -v ityfuzz >/dev/null 2>&1; then
     cp -f "$(command -v ityfuzz)" "$ITYFUZZ_DIR/bin/ityfuzz"
   else
-    found="$(find "$HOME" -type f -name ityfuzz -perm -u+x 2>/dev/null | head -n 1 || true)"
+    found="$(find "$HOME" /opt/render -type f -name ityfuzz -perm -u+x 2>/dev/null | head -n 1 || true)"
     if [ -n "$found" ]; then cp -f "$found" "$ITYFUZZ_DIR/bin/ityfuzz"; fi
   fi
 }
@@ -91,9 +106,9 @@ command -v slither
 slither --version
 command -v halmos
 halmos --version
-command -v ityfuzz
-ityfuzz --version
-command -v osv-scanner
-osv-scanner --version
-command -v gitleaks
-gitleaks version
+command -v "$ITYFUZZ_DIR/bin/ityfuzz"
+"$ITYFUZZ_DIR/bin/ityfuzz" --version
+command -v "$TOOLS_DIR/osv-scanner"
+"$TOOLS_DIR/osv-scanner" --version
+command -v "$TOOLS_DIR/gitleaks"
+"$TOOLS_DIR/gitleaks" version
