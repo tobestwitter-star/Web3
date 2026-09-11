@@ -1,8 +1,10 @@
 import os
+from pathlib import Path
 from flask import Flask,jsonify,request
 from advanced_web3_analyzer import AdvancedWeb3Analyzer,generate_detailed_report
 from bounty_engine import OpportunityStore,PublicProgramDiscovery,build_report
 from security_toolchain import SecurityToolchain
+from security_orchestrator import SecurityEngineOrchestrator
 from research_pipeline import ResearchPipeline
 from research_queue import ResearchQueue
 from economic_analysis import EconomicAnalyzer
@@ -11,7 +13,7 @@ from authorization import AuthorizationPolicy
 from database import PostgresOpportunityStore,PostgresResearchQueue,is_postgres
 app=Flask(__name__)
 store=PostgresOpportunityStore() if is_postgres() else OpportunityStore(os.environ.get('BUGHUNTER_DB','bughunter.db'))
-discovery=PublicProgramDiscovery();toolchain=SecurityToolchain();research=ResearchPipeline();queue=PostgresResearchQueue() if is_postgres() else ResearchQueue(os.environ.get('BUGHUNTER_DB','bughunter.db'));economics=EconomicAnalyzer()
+discovery=PublicProgramDiscovery();toolchain=SecurityToolchain();research=ResearchPipeline();queue=PostgresResearchQueue() if is_postgres() else ResearchQueue(os.environ.get('BUGHUNTER_DB','bughunter.db'));economics=EconomicAnalyzer();orchestrator=SecurityEngineOrchestrator()
 STATUS='UNVERIFIED — HUMAN REVIEW REQUIRED'
 def fd(f):return {'id':f.id,'type':f.vulnerability_type,'severity':f.severity,'category':f.category,'location':f.location,'description':f.description,'poc':f.proof_of_concept,'impact':f.economic_impact,'confidence':f.confidence,'bounty_low':f.bounty_estimate_low,'bounty_high':f.bounty_estimate_high,'requires_verification':True,'status':STATUS}
 def _refresh(sources=None):
@@ -34,6 +36,13 @@ def _protected(opportunity_id):
 def health():return jsonify({'status':'Web3 BugHunter running','human_review_required':True,'auto_submission':False,'live_public_discovery':True,'continuous_queue':True})
 @app.get('/api/security-tools')
 def security_tools():return jsonify({'tools':toolchain.inventory(),'license_policy':'Use tools according to their licenses; no automatic installation.'})
+@app.get('/api/security-tools/live-self-test')
+def security_tools_live_self_test():
+ root=Path(__file__).resolve().parent;fixture=root/'benchmarks'/'engine_fixture';slither_fixture=root/'benchmarks'/'slither_fixture'
+ if not fixture.is_dir() or not slither_fixture.is_dir():return jsonify({'status':'failed','error':'bundled engine fixtures are missing','review_status':STATUS}),500
+ stage1=orchestrator.run_stage1(str(fixture),timeout=60,explicit=['slither','forge'])
+ halmos=orchestrator.core.run_halmos(str(fixture),timeout=60)
+ return jsonify({'status':'live_engine_self_test_complete','production_runtime':True,'stage1':stage1,'halmos':halmos,'slither_fixture':str(slither_fixture),'orchestrator_inventory':orchestrator.inventory(),'review_status':STATUS})
 @app.post('/api/security-tools/analyze')
 def security_tools_analyze():
  d=request.get_json(silent=True) or {};src=d.get('source_dir');op,err,code=_protected(d.get('opportunity_id',''))
@@ -62,7 +71,7 @@ def research_acquire():
  d=request.get_json(silent=True) or {};op,err,code=_protected(d.get('opportunity_id',''))
  if err:return err,code
  t=d.get('target') or {};from research_pipeline import Target
- target=Target(str(op.get('name','target')),str(t.get('source_url','')),str(t.get('kind','repository')),str(t.get('branch','')),True,str(t.get('scope_evidence','')),t.get('addresses',[]),t.get('contracts',[]),t.get('assets',[]))
+target=Target(str(op.get('name','target')),str(t.get('source_url','')),str(t.get('kind','repository')),str(t.get('branch','')),True,str(t.get('scope_evidence','')),t.get('addresses',[]),t.get('contracts',[]),t.get('assets',[]))
  if target.kind=='evm_contract' or not target.source_url:return jsonify({'ok':False,'blocked':'unsupported_acquisition_type','reason':'EVM/on-chain targets are in scope records but repository acquisition is only supported for public GitHub repositories.'})
  return jsonify(research.acquirer.clone_public_repo(target,str(d.get('workspace') or os.environ.get('RESEARCH_WORKSPACE','research-workspace')),True))
 @app.post('/api/research/analyze')
