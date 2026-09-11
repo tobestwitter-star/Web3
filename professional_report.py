@@ -20,20 +20,32 @@ def _first(mapping: Dict[str, Any], *keys: str, default=None):
     return default
 
 
-def _engine_evidence(finding: Dict[str, Any]) -> List[Dict[str, Any]]:
-    observations = finding.get("engine_observations") or []
-    if observations:
+def _registry_for(finding: Dict[str, Any], analysis: Dict[str, Any]) -> Dict[str, Any]:
+    registry = analysis.get("evidence_registry") or {}
+    return registry.get(str(finding.get("id")), registry.get(finding.get("id"), {})) or {}
+
+
+def _structured_engine_evidence(finding: Dict[str, Any], registry: Dict[str, Any]) -> List[Dict[str, Any]]:
+    observations = registry.get("engine_observations")
+    if isinstance(observations, list) and observations:
         return observations
-    evidence = finding.get("evidence") or []
-    engines = finding.get("engines") or ([finding.get("engine")] if finding.get("engine") else [])
-    return [{"engine": engine, "evidence": evidence} for engine in engines]
+    observations = finding.get("engine_observations")
+    if isinstance(observations, list) and observations:
+        return observations
+    return []
+
+
+def _conflicts(registry: Dict[str, Any]) -> List[Dict[str, Any]]:
+    conflicts = registry.get("conflicts")
+    return conflicts if isinstance(conflicts, list) else []
 
 
 def build_professional_report(findings: Iterable[Dict[str, Any]], opportunity: Dict[str, Any] | None = None, analysis: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    """Build the final report from correlated/enriched pipeline findings only.
+    """Build a report from final correlated findings and authoritative structured evidence.
 
-    Missing evidence stays missing. The report never upgrades an observation to a
-    proven finding and never performs or implies bounty submission.
+    The evidence registry is populated by the research pipeline from actual engine
+    executions. Flattened finding fields are only fallback presentation data.
+    Missing or conflicting evidence remains explicit and no execution is inferred.
     """
     opp = opportunity or {}
     analysis = analysis or {}
@@ -45,11 +57,17 @@ def build_professional_report(findings: Iterable[Dict[str, Any]], opportunity: D
     }
     reports: List[Dict[str, Any]] = []
     for f in findings or []:
+        registry = _registry_for(f, analysis)
         historical = f.get("historical_intelligence") or {}
         matches = historical.get("matches") or f.get("possible_duplicate_indicators") or []
         duplicate_status = f.get("duplicate_classification")
         if not duplicate_status or duplicate_status == "no useful match":
             duplicate_status = DUPLICATE if matches else "no historical match established"
+        reproduction = registry.get("reproduction") or {}
+        if not isinstance(reproduction, dict):
+            reproduction = {"malformed": reproduction}
+        symbolic = registry.get("symbolic")
+        invariant = registry.get("invariant")
         reports.append({
             "finding_id": f.get("id"),
             "title": _first(f, "title", "vulnerability", "check", default="Potential vulnerability"),
@@ -65,21 +83,19 @@ def build_professional_report(findings: Iterable[Dict[str, Any]], opportunity: D
             "attack_path_uncertain": f.get("attack_path_uncertain"),
             "root_cause": f.get("root_cause"),
             "exploitability_reasoning": _first(f, "exploitability_reasoning", "exploitability", "attack_scenario"),
-            "reproduction": {
-                "evidence": f.get("execution_evidence"),
-                "reproducibility_score": f.get("reproducibility"),
-                "status": "observed execution evidence" if f.get("execution_evidence") else "not demonstrated",
-            },
-            "engine_evidence": _engine_evidence(f),
-            "engine_provenance": _list(f.get("engines") or f.get("engine")),
+            "reproduction": reproduction,
+            "engine_evidence": _structured_engine_evidence(f, registry),
+            "engine_provenance": registry.get("engine_provenance") or f.get("engines") or _list(f.get("engine")),
+            "execution_metadata": registry.get("execution_metadata") or [],
             "traces_inputs_coverage_symbolic": {
-                "trace": f.get("trace"),
-                "inputs": f.get("inputs"),
-                "coverage": f.get("coverage"),
-                "symbolic": f.get("symbolic_evidence"),
-                "invariants": f.get("invariant_evidence"),
+                "trace": registry.get("trace", f.get("trace")),
+                "inputs": registry.get("inputs", f.get("inputs")),
+                "coverage": registry.get("coverage", f.get("coverage")),
+                "symbolic": symbolic if symbolic is not None else f.get("symbolic_evidence"),
+                "invariants": invariant if invariant is not None else f.get("invariant_evidence"),
             },
-            "economic_impact": f.get("economic_analysis") or f.get("economic_impact"),
+            "conflicting_evidence": _conflicts(registry),
+            "economic_impact": registry.get("economic_analysis") or f.get("economic_analysis") or f.get("economic_impact"),
             "scope_evidence": f.get("scope_evidence") or scope,
             "authorization_evidence": authorization,
             "historical_context": f.get("historical_context") or [],
@@ -90,19 +106,19 @@ def build_professional_report(findings: Iterable[Dict[str, Any]], opportunity: D
             "validated_by_multiple_tools": f.get("validated_by_multiple_tools"),
             "limitations": _list(f.get("limitations") or ["Finding remains unverified and requires independent human reproduction."]),
             "remediation": f.get("remediation"),
-            "evidence_provenance": _list(f.get("evidence_provenance") or f.get("source_attribution")),
+            "evidence_provenance": registry.get("provenance") or _list(f.get("evidence_provenance") or f.get("source_attribution")),
             "review_status": STATUS,
         })
     return {
-        "report_version": "1.0",
+        "report_version": "1.1",
         "report_type": "professional_bounty_report",
         "review_status": STATUS,
         "do_not_auto_submit": True,
         "human_review_only": True,
-        "observed_facts_vs_analysis": "Evidence fields are observations supplied by the pipeline; reasoning fields are analysis and remain subject to human verification.",
+        "observed_facts_vs_analysis": "Evidence fields are observations from recorded engine executions; reasoning fields are analysis and remain subject to human verification.",
         "opportunity": {k: opp.get(k) for k in ("id", "name", "source", "url", "max_bounty_usd", "score")},
         "scope_and_authorization": {"scope": scope, "authorization": authorization},
         "findings": reports,
         "submission": {"automatic_submission": False, "manual_submission_allowed_only_after_human_approval": True},
-        "limitations": ["Missing evidence is not inferred or fabricated.", "UNVERIFIED findings require human reproduction and scope verification.", "Historical similarity is not proof of duplication."],
+        "limitations": ["Missing evidence is not inferred or fabricated.", "Conflicting or partial engine evidence is preserved for human review.", "UNVERIFIED findings require human reproduction and scope verification.", "Historical similarity is not proof of duplication."],
     }
