@@ -54,15 +54,22 @@ jobs:
           set -euo pipefail
           curl -fsSL -o "$RUNNER_TEMP/ityfuzz-installer.sh" https://ity.fuzz.land/
           bash "$RUNNER_TEMP/ityfuzz-installer.sh"
-          export PATH="$HOME/.ityfuzz/bin:$HOME/.local/bin:$PATH"
-          if command -v ityfuzzup >/dev/null 2>&1; then
-            ityfuzzup
-          elif [ -x "$HOME/.ityfuzz/bin/ityfuzzup" ]; then
-            "$HOME/.ityfuzz/bin/ityfuzzup"
-          else
-            echo "ityfuzzup was not installed by the official installer" >&2
+          if [ -f "$HOME/.bashrc" ]; then
+            source "$HOME/.bashrc"
+          fi
+          export PATH="$HOME/.ityfuzz/bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+          if ! command -v ityfuzzup >/dev/null 2>&1; then
+            ityfuzzup_path="$(find "$HOME" -type f -name ityfuzzup -perm -u+x 2>/dev/null | head -n 1 || true)"
+            if [ -n "$ityfuzzup_path" ]; then
+              export PATH="$(dirname "$ityfuzzup_path"):$PATH"
+            fi
+          fi
+          if ! command -v ityfuzzup >/dev/null 2>&1; then
+            echo "ityfuzzup was not found after running the official installer" >&2
+            find "$HOME" -type f -name ityfuzzup -print 2>/dev/null || true
             exit 1
           fi
+          ityfuzzup
           found="$(find "$HOME" "$RUNNER_TEMP" -type f -name ityfuzz -perm -u+x 2>/dev/null | head -n 1 || true)"
           if [ -z "$found" ]; then
             echo "ItyFuzz installation failed" >&2
