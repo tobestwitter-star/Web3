@@ -4,7 +4,6 @@ import hashlib,json,os,re,shutil,subprocess,tempfile,time
 from pathlib import Path
 from typing import Any,Dict,List,Optional
 STATUS="UNVERIFIED — HUMAN REVIEW REQUIRED"
-def _sha256(text:str)->str:return hashlib.sha256(text.encode("utf-8","replace")).hexdigest()
 class MatureEngineRunner:
  MAX_TIMEOUT=180; MAX_OUTPUT=50000
  def inventory(self)->Dict[str,Dict[str,Any]]:
@@ -105,6 +104,8 @@ class MatureEngineRunner:
   if not meta["available"]:return {"tool":"ityfuzz","status":"not_available","available":False,"error":"ityfuzz is not installed","findings":[]}
   build=self._build_system(source_dir)
   if build!="foundry":return {"tool":"ityfuzz","status":"not_applicable","available":True,"build_system":build,"error":"ItyFuzz escalation requires a Foundry-style Solidity target; target was not mutated","findings":[]}
-  r=self._run(["ityfuzz","evm","--forge-build","."],source_dir,timeout)
-  return {"tool":"ityfuzz","status":r["status"],"available":True,"version":self._version("ityfuzz",source_dir),"build_system":build,"execution":r,"findings":[],"evidence_provenance":{"engine":"ityfuzz","command":r.get("command"),"cwd":r.get("cwd"),"stdout_sha256":r.get("stdout_sha256"),"stderr_sha256":r.get("stderr_sha256")},"review_status":STATUS}
+  deployment_script="script/ItyFuzzDeployment.s.sol:ItyFuzzDeployment"
+  r=self._run(["ityfuzz","evm","--forge-build",".","--deployment-script",deployment_script],source_dir,timeout)
+  return {"tool":"ityfuzz","status":r["status"],"available":True,"version":self._version("ityfuzz",source_dir),"build_system":build,"deployment_script":deployment_script,"execution":r,"findings":[],"evidence_provenance":{"engine":"ityfuzz","command":r.get("command"),"cwd":r.get("cwd"),"stdout_sha256":r.get("stdout_sha256"),"stderr_sha256":r.get("stderr_sha256")},"review_status":STATUS}
  def run_core(self,source_dir,timeout=120):return {"status":"core_engine_execution_complete","build_system":self._build_system(source_dir),"engines":[self.run_slither(source_dir,timeout),self.run_foundry(source_dir,timeout)],"review_status":STATUS}
+def _sha256(text:str)->str:return hashlib.sha256(text.encode("utf-8","replace")).hexdigest()
