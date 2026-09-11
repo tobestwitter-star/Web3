@@ -4,7 +4,7 @@ from security_toolchain import SecurityToolchain
 
 def test_inventory_is_non_destructive():
     tools=SecurityToolchain().inventory()
-    assert {t['name'] for t in tools}=={'slither','aderyn','forge','echidna','medusa','wake','halmos'}
+    assert {t['name'] for t in tools}=={'slither','aderyn','forge','echidna','medusa','wake','halmos','ityfuzz','osv-scanner','gitleaks'}
     assert all('license' in t and 'project' in t for t in tools)
 
 def test_analysis_requires_local_directory():
