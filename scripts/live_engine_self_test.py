@@ -13,13 +13,15 @@ def main()->int:
   print(json.dumps({"status":"failed","missing":missing,"inventory":required},sort_keys=True),flush=True);return 1
  stage1=orchestrator.run_stage1(str(FIXTURE),timeout=60,explicit=["slither","forge","osv-scanner","gitleaks"]);halmos=orchestrator.core.run_halmos(str(FIXTURE),timeout=60);ityfuzz=orchestrator.core.run_ityfuzz(str(FIXTURE),timeout=60)
  payload={"status":"completed","inventory":required,"stage1":stage1,"halmos":halmos,"ityfuzz":ityfuzz};print(json.dumps(payload,sort_keys=True,default=str),flush=True)
- allowed={"completed","completed_with_findings"}
  for item in stage1["results"]:
-  observed=item.get("integration",{}).get("status") or item.get("result",{}).get("status")
-  if observed in allowed:continue
-  if item.get("tool") in {"osv-scanner","gitleaks"} and item.get("result",{}).get("returncode")==1:continue
+  tool=item.get("tool");observed=item.get("integration",{}).get("status") or item.get("result",{}).get("status");rc=item.get("result",{}).get("returncode")
+  if tool=="slither" and observed=="completed_with_findings":continue
+  if tool=="forge" and observed=="completed" and rc==0:continue
+  if tool in {"osv-scanner","gitleaks"} and rc in {0,1}:continue
   return 1
- if halmos.get("status") not in {"completed","failed"}:return 1
- if ityfuzz.get("status") not in {"completed","failed"}:return 1
+ for name,result in (("halmos",halmos),("ityfuzz",ityfuzz)):
+  execution=result.get("execution",{})
+  if result.get("status")!="completed" or execution.get("returncode")!=0:
+   return 1
  return 0
 if __name__=="__main__":raise SystemExit(main())
