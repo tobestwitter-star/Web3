@@ -5,67 +5,60 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ProfessionalReportTest {
-    private fun completeReport(): JSONObject = JSONObject(
-        """
-        {
-          "report_version":"1.1",
-          "review_status":"unverified",
-          "do_not_auto_submit":true,
-          "human_review_only":true,
-          "scope_and_authorization":{"scope":"authorized scope","authorization":{"confirmed":true}},
-          "limitations":["Missing evidence is not inferred or fabricated."],
-          "findings":[{
-            "finding_id":"f-1","title":"Reentrancy","severity":"high","confidence":0.91,
-            "review_status":"unverified","duplicate_status":"possible duplicate",
-            "engine_evidence":[{"engine":"slither","raw_evidence":["structured slither evidence"]},{"engine":"forge","raw_evidence":["structured forge evidence"]}],
-            "engine_provenance":[{"engine":"forge","version":"1.0","command":"forge test"}],
-            "execution_metadata":[{"status":"executed","returncode":0,"command":"forge test"}],
-            "reproduction":{"status":"demonstrated","evidence":{"trace":"call trace","inputs":{"amount":1}}},
-            "traces_inputs_coverage_symbolic":{"trace":"call trace","inputs":{"amount":1},"coverage":{"lines":42},"symbolic":{"status":"executed"},"invariants":{"status":"executed"}},
-            "evidence_provenance":[{"engine":"forge","sha256":"abc"}],
-            "historical_context":[{"match_type":"semantic_similarity_lead","similarity":0.84}],
-            "economic_impact":{"estimated_loss_usd":125000},
-            "remediation":"Update state before external interaction.",
-            "limitations":["Requires independent human reproduction."]
-          }]
-        }
-        """.trimIndent()
-    ).apply {
-        put("review_status", REPORT_REVIEW_STATUS)
-        getJSONArray("findings").getJSONObject(0).put("review_status", REPORT_REVIEW_STATUS).put("duplicate_status", REPORT_DUPLICATE_STATUS)
-    }
+    private fun report(json: String): ProfessionalReport = JSONObject(json.trimIndent()).toProfessionalReport()
 
     @Test fun completeStructuredReportPreservesAuthoritativeFields() {
-        val report = completeReport().toProfessionalReport()
-        assertEquals(REPORT_REVIEW_STATUS, report.reviewStatus)
-        assertTrue(report.doNotAutoSubmit)
-        assertTrue(report.humanReviewOnly)
-        assertEquals(1, report.findings.length())
-        val finding = report.finding(0)!!
+        val parsed = report("""
+            {"review_status":"unverified","do_not_auto_submit":true,"human_review_only":true,"findings":[{"finding_id":"f-1","severity":"high","confidence":0.91,"engine_evidence":[{"engine":"slither"},{"engine":"forge"}],"engine_provenance":[{"engine":"forge","version":"1.0","command":"forge test"}],"execution_metadata":[{"status":"executed","returncode":0}],"reproduction":{"status":"demonstrated"},"evidence_provenance":[{"engine":"forge","sha256":"abc"}],"historical_context":[{"match_type":"semantic_similarity_lead"}],"economic_impact":{"estimated_loss_usd":125000},"remediation":"Update state before external interaction.","limitations":["Requires human reproduction"]}]}
+        """)
+        parsed.raw.put("review_status", REPORT_REVIEW_STATUS)
+        parsed.finding(0)!!.put("review_status", REPORT_REVIEW_STATUS).put("duplicate_status", REPORT_DUPLICATE_STATUS)
+        assertEquals(REPORT_REVIEW_STATUS, parsed.reviewStatus)
+        assertTrue(parsed.doNotAutoSubmit)
+        assertTrue(parsed.humanReviewOnly)
+        val finding = parsed.finding(0)!!
         assertEquals("high", finding.getString("severity"))
-        assertEquals(REPORT_DUPLICATE_STATUS, report.duplicateStatus(finding))
+        assertEquals(REPORT_DUPLICATE_STATUS, parsed.duplicateStatus(finding))
         assertEquals(2, finding.getJSONArray("engine_evidence").length())
-        assertEquals(1, finding.getJSONArray("engine_provenance").length())
-        assertTrue(report.hasDemonstratedEvidence(finding))
+        assertEquals("forge", finding.getJSONArray("engine_provenance").getJSONObject(0).getString("engine"))
+        assertTrue(parsed.hasDemonstratedEvidence(finding))
         assertEquals("abc", finding.getJSONArray("evidence_provenance").getJSONObject(0).getString("sha256"))
+        assertEquals("semantic_similarity_lead", finding.getJSONArray("historical_context").getJSONObject(0).getString("match_type"))
+        assertEquals(125000, finding.getJSONObject("economic_impact").getInt("estimated_loss_usd"))
+    }
+
+    @Test fun reproductionSymbolicInvariantAndProvenanceRemainStructured() {
+        val parsed = report("""
+            {"findings":[{"reproduction":{"status":"demonstrated","trace":"call trace","inputs":{"amount":1}},"traces_inputs_coverage_symbolic":{"trace":"call trace","inputs":{"amount":1},"coverage":{"lines":42},"symbolic":{"status":"executed"},"invariants":{"status":"executed"}},"evidence_provenance":[{"engine":"halmos","version":"1.0","command":"halmos"}]}]}
+        """)
+        val finding = parsed.finding(0)!!
+        assertEquals("demonstrated", finding.getJSONObject("reproduction").getString("status"))
+        assertEquals("call trace", finding.getJSONObject("reproduction").getString("trace"))
+        assertEquals(42, finding.getJSONObject("traces_inputs_coverage_symbolic").getJSONObject("coverage").getInt("lines"))
+        assertEquals("executed", finding.getJSONObject("traces_inputs_coverage_symbolic").getJSONObject("symbolic").getString("status"))
+        assertEquals("executed", finding.getJSONObject("traces_inputs_coverage_symbolic").getJSONObject("invariants").getString("status"))
+        assertEquals("halmos", finding.getJSONArray("evidence_provenance").getJSONObject(0).getString("engine"))
     }
 
     @Test fun unknownFieldsAndPartialReportsRemainForwardCompatible() {
-        val report = JSONObject("""{"review_status":"unverified","future_field":{"value":true},"findings":[{"finding_id":"f-2","severity":"medium","unknown_engine_field":"preserve raw JSON"}]}""").toProfessionalReport()
-        assertEquals(REPORT_REVIEW_STATUS, report.reviewStatus)
-        assertEquals("preserve raw JSON", report.finding(0)!!.getString("unknown_engine_field"))
-        assertFalse(report.hasDemonstratedEvidence(report.finding(0)!!))
+        val parsed = report("""{"review_status":"unverified","future_field":{"value":true},"findings":[{"finding_id":"f-2","unknown_engine_field":"preserve raw JSON"}]}""")
+        parsed.raw.put("review_status", REPORT_REVIEW_STATUS)
+        assertEquals(REPORT_REVIEW_STATUS, parsed.reviewStatus)
+        assertEquals("preserve raw JSON", parsed.finding(0)!!.getString("unknown_engine_field"))
+        assertFalse(parsed.hasDemonstratedEvidence(parsed.finding(0)!!))
     }
 
     @Test fun missingEvidenceIsDistinctFromDemonstratedEvidence() {
-        val report = JSONObject("""{"findings":[{"finding_id":"f-3","reproduction":{"status":"not demonstrated"}}]}""").toProfessionalReport()
-        assertFalse(report.hasDemonstratedEvidence(report.finding(0)!!))
-        assertEquals("not demonstrated", report.finding(0)!!.getJSONObject("reproduction").getString("status"))
+        val parsed = report("""{"findings":[{"finding_id":"f-3","reproduction":{"status":"not demonstrated"}}]}""")
+        val finding = parsed.finding(0)!!
+        assertFalse(parsed.hasDemonstratedEvidence(finding))
+        assertEquals("not demonstrated", finding.getJSONObject("reproduction").getString("status"))
     }
 
     @Test fun malformedEvidenceDoesNotBecomeAnExecutionClaim() {
-        val report = JSONObject("""{"findings":[{"finding_id":"f-4","reproduction":"malformed"}]}""").toProfessionalReport()
-        assertFalse(report.hasDemonstratedEvidence(report.finding(0)!!))
-        assertEquals("malformed", report.finding(0)!!.getString("reproduction"))
+        val parsed = report("""{"findings":[{"finding_id":"f-4","reproduction":"malformed"}]}""")
+        val finding = parsed.finding(0)!!
+        assertFalse(parsed.hasDemonstratedEvidence(finding))
+        assertEquals("malformed", finding.getString("reproduction"))
     }
 }
